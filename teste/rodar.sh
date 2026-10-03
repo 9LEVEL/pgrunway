@@ -9,7 +9,9 @@
 # Roteiro: (1) o que a conferência precisa recusar; (2) --checar, como root e como quem veio do sudo; (3)
 # instalação sem opção nenhuma, pelo usuário "teste" via sudo: superusuário, .pgpass e pgtower; (4) o administrador
 # libera uma aplicação no pg_hba.conf e roda de novo: nada muda, nem a senha, e a linha dele fica; (5) o mesmo
-# servidor ganha --com-docker; (6) de novo, sem mudar nada.
+# servidor ganha --com-docker, com o pghangar; (6) de novo, sem mudar nada.
+# O pghangar vem do release público; sem ele, de uma cópia baixada com o gh (credencial de quem roda o teste); sem
+# nenhum dos dois, a instalação tem de avisar que não deu para baixar.
 # Precisa de Docker no host e de internet (apt, Docker Hub e o repositório do Alpine).
 
 set -Eeuo pipefail
@@ -24,6 +26,7 @@ SUBREDE=10.251.${UBUNTU%%.*}.0/24   # uma por versão (testes em paralelo), fora
 HBA=/etc/postgresql/18/main/pg_hba.conf
 APLICACAO="hostssl all             all             10.0.10.0/24            scram-sha-256"
 SAIDA=$(mktemp -d)
+INSTALAR_ENV=()
 
 passo() { printf '\n\e[1m### %s\e[0m\n' "$*"; }
 falhou() {
@@ -63,7 +66,7 @@ recusa() {
 instalar() {
 	local arq=$SAIDA/$1
 	shift
-	docker exec -e SUDO_USER=teste "$NOME" /pgrunway/install.sh --sim --disco ssd "$@" | tee "$arq"
+	docker exec -e SUDO_USER=teste "${INSTALAR_ENV[@]}" "$NOME" /pgrunway/install.sh --sim --disco ssd "$@" | tee "$arq"
 	if grep -q 'erro inesperado' "$arq"; then falhou "erro inesperado na instalação ($*)"; fi
 }
 
@@ -88,6 +91,16 @@ aplicacao_depois_do_bloco() {
 	if [[ $(docker exec "$NOME" grep -c '^# >>> pgrunway' "$HBA") != 1 ]]; then falhou "o bloco do pgrunway foi duplicado"; fi
 	echo "ok: a linha da aplicação continua depois do bloco, que é um só"
 }
+
+PGHANGAR_VERSAO=$(sed -nE 's/^PGHANGAR_VERSAO=\$\{PGR_PGHANGAR_VERSAO:-(v[0-9.]+)\}$/\1/p' "$RAIZ/install.sh")
+if curl -fsIL -m 20 "https://github.com/9level/pghangar/releases/download/$PGHANGAR_VERSAO/SHA256SUMS" >/dev/null 2>&1; then
+	PGHANGAR=publico
+elif command -v gh >/dev/null && gh release download "$PGHANGAR_VERSAO" -R 9level/pghangar -D "$SAIDA/espelho" >/dev/null 2>&1; then
+	PGHANGAR=espelho
+else
+	PGHANGAR=ausente
+fi
+echo "pghangar $PGHANGAR_VERSAO: $PGHANGAR"
 
 passo "servidor de teste: Ubuntu $UBUNTU com systemd, sem as listas do apt, como um recém-instalado"
 construir_imagem "$UBUNTU"
@@ -121,6 +134,7 @@ passo "3. instalação sem opção nenhuma"
 instalar so-banco.txt
 if ! grep -q 'sistema atualizado' "$SAIDA/so-banco.txt"; then falhou "a primeira instalação devia atualizar o sistema"; fi
 if docker exec "$NOME" sh -c 'command -v docker' >/dev/null; then falhou "sem --com-docker, o Docker não deveria estar instalado"; fi
+if docker exec "$NOME" sh -c 'command -v pghangar' >/dev/null; then falhou "sem --com-docker, o pghangar não deveria estar instalado"; fi
 if ! docker exec "$NOME" grep -q '^host    all             postgres        0.0.0.0/0               reject' "$HBA"; then
 	falhou "falta a linha que recusa o postgres de outra máquina"
 fi
@@ -150,8 +164,25 @@ if [[ $(docker exec "$NOME" sha256sum /home/teste/.pgpass) != "$PGPASS_ANTES" ]]
 if ! grep -q 'superusuário teste já existe: fica como está' "$SAIDA/so-banco-2.txt"; then falhou "o superusuário devia ficar"; fi
 echo "ok: o superusuário e a senha ficaram"
 
-passo "5. o mesmo servidor ganha --com-docker"
+passo "5. o mesmo servidor ganha --com-docker, com o pghangar ($PGHANGAR)"
+if [[ $PGHANGAR == espelho ]]; then
+	docker cp "$SAIDA/espelho" "$NOME:/espelho"
+	INSTALAR_ENV=(-e PGR_PGHANGAR_BASE=file:///espelho)
+fi
 instalar com-docker.txt --com-docker
+case $PGHANGAR in
+publico | espelho)
+	if ! grep -q "pghangar $PGHANGAR_VERSAO instalado" "$SAIDA/com-docker.txt" ||
+		[[ $(docker exec "$NOME" pghangar versao | head -n 1) != "pghangar $PGHANGAR_VERSAO" ]]; then
+		falhou "com --com-docker, o pghangar $PGHANGAR_VERSAO devia estar instalado"
+	fi
+	echo "ok: pghangar $PGHANGAR_VERSAO instalado"
+	;;
+*)
+	if ! grep -q 'não deu para baixar o pghangar' "$SAIDA/com-docker.txt"; then falhou "faltou o aviso do pghangar"; fi
+	echo "ok: sem acesso ao pghangar, a instalação avisou e seguiu"
+	;;
+esac
 if ! grep -q 'de um container na rede do Compose' "$SAIDA/com-docker.txt"; then
 	falhou "faltou a verificação de dentro dos containers"
 fi

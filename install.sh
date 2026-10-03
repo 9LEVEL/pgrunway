@@ -3,7 +3,8 @@
 # virtual: sistema atualizado, PostgreSQL e pgvector (travado numa versão), ajustes proporcionais à máquina e um
 # pg_hba.conf em que o superusuário postgres nunca entra pela rede. Cria o seu superusuário de administração (senha
 # no ~/.pgpass) e deixa o pgtower instalado e apontado para este servidor. Com --com-docker, instala também o Docker
-# para projetos em containers na mesma máquina. Termina conferindo tudo com um banco e um login temporários.
+# (para projetos em containers na mesma máquina) e o pghangar, que copia e restaura bancos entre servidores em
+# containers. Termina conferindo tudo com um banco e um login temporários.
 #
 #   sudo ./install.sh              explica, confere a máquina, mostra o plano e pede confirmação
 #   sudo ./install.sh --checar     só confere a máquina e mostra o plano; não muda nada
@@ -14,7 +15,7 @@
 
 set -Eeuo pipefail
 
-VERSAO=0.5.0
+VERSAO=0.6.0
 NOME=pgrunway
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -34,8 +35,14 @@ SO_COM_DOCKER=()               # opções de Docker usadas sem --com-docker
 # senha pelo socket; a senha, para entrar de outra máquina, fica no ~/.pgpass dele. Rodando como root direto: dba.
 USUARIO=${SUDO_USER:-}
 ADMIN='' CONTA='' CASA=''
-# pgtower: administração no terminal (https://github.com/9level/pgtower), baixado do GitHub com o SHA256 conferido
+# As ferramentas da 9Level, baixadas dos releases do GitHub com o SHA256 conferido. PGR_*_BASE troca a origem (um
+# espelho numa rede sem internet, por exemplo; file:// também serve).
+#   pgtower: administração no terminal                       https://github.com/9level/pgtower
+#   pghangar: cópia e restore de bancos entre servidores     https://github.com/9level/pghangar (com --com-docker)
 PGTOWER_VERSAO=${PGR_PGTOWER_VERSAO:-v0.13.1}
+PGTOWER_BASE=${PGR_PGTOWER_BASE:-https://github.com/9level/pgtower/releases/download/$PGTOWER_VERSAO}
+PGHANGAR_VERSAO=${PGR_PGHANGAR_VERSAO:-v0.4.0}
+PGHANGAR_BASE=${PGR_PGHANGAR_BASE:-https://github.com/9level/pghangar/releases/download/$PGHANGAR_VERSAO}
 # Redes do Docker (daemon.json): a ponte padrão e de onde saem as redes do Compose. O pg_hba.conf libera as duas.
 DOCKER_BIP=${PGR_DOCKER_BIP:-172.17.0.1/16}
 DOCKER_POOL=${PGR_DOCKER_POOL:-172.18.0.0/16}
@@ -47,7 +54,7 @@ $NOME $VERSAO: coloca um servidor PostgreSQL + pgvector no ar, numa máquina Ubu
 Uso: sudo ./install.sh [opções]      (sem opção nenhuma, é o caso comum)
 
   --checar              só confere a máquina e mostra o plano; não muda nada
-  --com-docker          instala também o Docker, para projetos em containers nesta máquina
+  --com-docker          instala também o Docker (projetos em containers aqui) e o pghangar
   -y, --sim             não pergunta antes de instalar (para automação)
   -h, --ajuda           esta ajuda
 
@@ -183,7 +190,7 @@ explicar() {
 		"Ajusta o Postgres ao tamanho da máquina; o superusuário postgres nunca entra de fora"
 		"Cria o seu superusuário de administração e instala o pgtower, já apontado para cá"
 	) i
-	if ((DOCKER)); then itens+=("Docker Engine e Compose oficiais, com as redes deles liberadas e a pasta $PASTA"); fi
+	if ((DOCKER)); then itens+=("Docker Engine e Compose oficiais, a pasta $PASTA e o pghangar (cópias e restores)"); fi
 	itens+=("Teste final com um banco e um login temporários, apagados no fim")
 	printf '%s\n%s\n\n' "${B}$NOME $VERSAO${N} coloca um ${B}servidor PostgreSQL${N} no ar: a primeira instalação de uma máquina" \
 		"nova, física ou virtual, conferida antes e testada no fim."
@@ -194,7 +201,7 @@ explicar() {
 # ---------------------------------------------------------------------------------------------------------------
 # 1. Conferência da máquina
 
-COD='' ARQ='' RAM_MB=0 CPUS=0 DISCO_GB=0 SSD=0 PG_ORIGEM='' PGPORT=5432
+COD='' ARQ='' RAM_MB=0 CPUS=0 DISCO_GB=0 DISCO_TOTAL_GB=0 SSD=0 PG_ORIGEM='' PGPORT=5432
 REDE_BIP='' REDE_POOL='' DAEMON_JSON_EXISTE=0
 PASSO=0
 passo() { PASSO=$((PASSO + 1)) && titulo "$PASSO. $*"; }
@@ -226,6 +233,8 @@ checar_maquina() {
 		ok "memória: $((RAM_MB / 1024)) GB, $CPUS núcleo(s)"
 	fi
 	DISCO_GB=$(df -B1G --output=avail / | tail -n 1 | tr -d ' ')
+	# Os ajustes usam o tamanho do disco, que não muda; o espaço livre muda, e a configuração ficaria indo e voltando
+	DISCO_TOTAL_GB=$(df -B1G --output=size / | tail -n 1 | tr -d ' ')
 	if ((DISCO_GB < 10)); then
 		erro "disco: ${DISCO_GB} GB livres em / (mínimo 10 GB)"
 	elif ((DISCO_GB < 30)); then
@@ -453,7 +462,7 @@ calcular_ajustes() {
 	((wm > 64)) && wm=64
 	((par < 1)) && par=1
 	((par > 4)) && par=4
-	((DISCO_GB < 50)) && wal=2GB
+	((DISCO_TOTAL_GB < 50)) && wal=2GB
 	AJUSTES="# Gerado pelo $NOME $VERSAO em $(date +%Y-%m-%d) para ${RAM_MB} MB de memória, $CPUS núcleo(s) e disco $tipo_disco.
 # Rodar o $NOME de novo regrava este arquivo. Para mudar um valor só neste servidor, use ALTER SYSTEM: o
 # postgresql.auto.conf vale por cima daqui.
@@ -509,9 +518,9 @@ mostrar_plano() {
 	info "Superusuário $ADMIN (senha no $CASA/.pgpass) e pgtower $PGTOWER_VERSAO apontado para cá"
 	if ((DOCKER)); then
 		info "Docker Engine, Buildx e Compose oficiais; redes $REDE_BIP e $REDE_POOL liberadas, com senha"
-		info "Pasta $PASTA (grupo docker, dono $CONTA)"
+		info "Pasta $PASTA (grupo docker, dono $CONTA) e pghangar $PGHANGAR_VERSAO (cópias e restores)"
 	else
-		info "Docker: não instala (para projetos em containers nesta máquina, --com-docker)"
+		info "Docker e pghangar: não instala (para containers e cópias nesta máquina, --com-docker)"
 	fi
 }
 
@@ -739,7 +748,7 @@ configurar_postgres() {
 # Superusuário de administração e pgtower
 
 administrar() {
-	passo "Superusuário e pgtower"
+	passo "Superusuário e ferramentas"
 	local pgpass=$CASA/.pgpass senha super
 	if [[ $(pgsql -c "select count(*) from pg_roles where rolname = '$ADMIN'") == 0 ]]; then
 		senha=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)
@@ -759,6 +768,44 @@ administrar() {
 	fi
 	instalar_pgtower
 	configurar_pgtower
+	if ((DOCKER)); then instalar_pghangar; fi
+}
+
+# baixar_conferido BASE ARQUIVO PASTA: baixa ARQUIVO e o SHA256SUMS do release e confere. 0 = conferido.
+baixar_conferido() {
+	local base=$1 arq=$2 dir=$3 quer tem
+	curl -fsSL -m 180 -o "$dir/$arq" "$base/$arq" 2>>"$LOG" || return 1
+	curl -fsSL -m 30 -o "$dir/SHA256SUMS" "$base/SHA256SUMS" 2>>"$LOG" || return 1
+	quer=$(awk -v a="$arq" '$2 == a {print $1}' "$dir/SHA256SUMS")
+	tem=$(sha256sum "$dir/$arq" | awk '{print $1}')
+	[[ -n $quer && $quer == "$tem" ]] || return 2
+}
+
+# O pghangar roda os pg_dump e pg_restore em containers com a rede do host: daqui, chega ao banco por 127.0.0.1,
+# como qualquer programa local. Fica em /opt/pghangar e em /usr/local/bin, como o "make instalar" dele.
+instalar_pghangar() {
+	if command -v pghangar >/dev/null; then
+		ok "pghangar já instalado ($(pghangar versao 2>/dev/null | head -n 1 || true)): fica"
+		return 0
+	fi
+	if [[ $ARQ != amd64 ]]; then
+		aviso "o pghangar só tem binário para amd64: não instalei (https://github.com/9level/pghangar)"
+		return 0
+	fi
+	local arq=pghangar_${PGHANGAR_VERSAO}_linux_amd64.tar.gz tmp codigo=0
+	tmp=$(mktemp -d)
+	baixar_conferido "$PGHANGAR_BASE" "$arq" "$tmp" || codigo=$?
+	if ((codigo == 0)) && tar -xzf "$tmp/$arq" -C "$tmp" pghangar 2>>"$LOG"; then
+		install -d -m 755 /opt/pghangar
+		install -m 755 "$tmp/pghangar" /opt/pghangar/pghangar
+		install -m 755 "$tmp/pghangar" /usr/local/bin/pghangar
+		ok "pghangar $PGHANGAR_VERSAO instalado em /opt/pghangar (SHA256 conferido)"
+	elif ((codigo == 2)); then
+		aviso "o SHA256 do pghangar não confere: não instalei (https://github.com/9level/pghangar)"
+	else
+		aviso "não deu para baixar o pghangar do GitHub: o resto está pronto (veja o registro)"
+	fi
+	rm -rf "$tmp"
 }
 
 # gravar_pgpass ARQUIVO SENHA: a senha do superusuário para localhost e 127.0.0.1, só para quem administra. Linhas
@@ -777,19 +824,14 @@ instalar_pgtower() {
 		ok "pgtower já instalado ($(pgtower --version 2>/dev/null | head -n 1 || true)): fica"
 		return 0
 	fi
-	local base=https://github.com/9level/pgtower/releases/download/$PGTOWER_VERSAO
-	local nome=pgtower-$PGTOWER_VERSAO-linux-$ARQ tmp quer tem
+	local nome=pgtower-$PGTOWER_VERSAO-linux-$ARQ tmp codigo=0
 	tmp=$(mktemp -d)
-	if curl -fsSL -m 180 -o "$tmp/$nome" "$base/$nome" 2>>"$LOG" &&
-		curl -fsSL -m 30 -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" 2>>"$LOG"; then
-		quer=$(awk -v a="$nome" '$2 == a {print $1}' "$tmp/SHA256SUMS")
-		tem=$(sha256sum "$tmp/$nome" | awk '{print $1}')
-		if [[ -n $quer && $quer == "$tem" ]]; then
-			install -m 755 "$tmp/$nome" /usr/local/bin/pgtower
-			ok "pgtower $PGTOWER_VERSAO instalado em /usr/local/bin (SHA256 conferido)"
-		else
-			aviso "o SHA256 do pgtower não confere: não instalei (https://github.com/9level/pgtower)"
-		fi
+	baixar_conferido "$PGTOWER_BASE" "$nome" "$tmp" || codigo=$?
+	if ((codigo == 0)); then
+		install -m 755 "$tmp/$nome" /usr/local/bin/pgtower
+		ok "pgtower $PGTOWER_VERSAO instalado em /usr/local/bin (SHA256 conferido)"
+	elif ((codigo == 2)); then
+		aviso "o SHA256 do pgtower não confere: não instalei (https://github.com/9level/pgtower)"
 	else
 		aviso "não deu para baixar o pgtower do GitHub: o banco está pronto do mesmo jeito (veja o registro)"
 	fi
@@ -857,6 +899,8 @@ Preparado pelo $NOME em $(date +%Y-%m-%d). Uma pasta por projeto aqui dentro, co
 | pgvector | $(versao_instalada "postgresql-$PG-pgvector"), travado (\`/etc/apt/preferences.d/pgrunway-pgdg\` e \`apt-mark hold\`) |
 | Docker | $(versao_instalada docker-ce); redes $REDE_BIP e $REDE_POOL (\`/etc/docker/daemon.json\`) |
 | Ajustes | \`/etc/postgresql/$PG/main/conf.d/90-pgrunway.conf\` (o \`ALTER SYSTEM\` vale por cima) |
+| Administração | superusuário \`$ADMIN\`, senha no \`$CASA/.pgpass\`; \`pgtower\` abre este servidor |
+| Cópias e restores | \`sudo pghangar\` (na primeira vez, aba 6: \`b\` baixa as imagens e \`g\` gera a chave SSH) |
 
 ## Banco de um projeto
 
@@ -945,6 +989,13 @@ verificar() {
 			aviso "o pgtower não listou este servidor: confira com pgtower --list"
 		fi
 	fi
+	if ((DOCKER)) && command -v pghangar >/dev/null; then
+		if pghangar versao >/dev/null 2>>"$LOG"; then
+			ok "$(pghangar versao 2>/dev/null | head -n 1) responde (sudo pghangar)"
+		else
+			erro "o pghangar instalado não responde: veja o registro"
+		fi
+	fi
 	if ((DOCKER)); then verificar_containers "$senha"; fi
 	limpar_teste
 	TESTE_BANCO='' TESTE_ROLE='' TESTE_REDE=''
@@ -1001,6 +1052,9 @@ resumo_admin() {
 	if ! command -v pgtower >/dev/null; then pgtower_aqui="(pgtower não instalado)"; fi
 	printf '\n%s\n' "Para administrar, o superusuário ${B}$ADMIN${N} (senha no $CASA/.pgpass, só $CONTA lê):"
 	printf '  %-32s %s\n' "$pgtower_aqui" "abre este servidor" "$psql_aqui" "o mesmo, no psql"
+	if ((DOCKER)) && command -v pghangar >/dev/null; then
+		printf '  %-32s %s\n' "sudo pghangar" "cópias e restores (1ª vez: aba 6, teclas b e g)"
+	fi
 	printf '%s\n' "De outra máquina (o pgtower na sua estação), libere o IP dela no fim do pg_hba.conf:"
 	printf '  %s\n' "hostssl all $ADMIN ${estacao:-IP-DA-ESTACAO}/$mascara scram-sha-256" "sudo systemctl reload postgresql"
 	printf '  %s\n' "e na estação: postgres://$ADMIN@${ip_srv:-IP-DO-SERVIDOR}:$PGPORT/postgres?sslmode=require"
@@ -1054,11 +1108,12 @@ main() {
 	titulo "Pronto"
 	local versoes
 	versoes="PostgreSQL $(versao_instalada "postgresql-$PG" | sed 's/-.*//') · pgvector $(versao_instalada "postgresql-$PG-pgvector" | sed 's/-.*//')"
-	if ((DOCKER)); then
-		versoes+=" · Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null) · Compose $(docker compose version --short 2>/dev/null)"
-	fi
 	if command -v pgtower >/dev/null; then versoes+=" · $(pgtower --version 2>/dev/null | head -n 1 || true)"; fi
+	if ((DOCKER)) && command -v pghangar >/dev/null; then versoes+=" · $(pghangar versao 2>/dev/null | head -n 1 || true)"; fi
 	info "$versoes"
+	if ((DOCKER)); then
+		info "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null) · Compose $(docker compose version --short 2>/dev/null)"
+	fi
 	if ((${#AVISOS[@]})); then
 		printf '\n%s\n' "${Y}Avisos:${N}"
 		printf '  %s %s\n' "${Y}!${N}" "${AVISOS[@]}"

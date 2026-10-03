@@ -25,6 +25,11 @@ nunca entra de outra máquina. Cria o **seu** superusuário de administração e
 [pgtower](https://github.com/9level/pgtower) instalado e apontado para o servidor: terminou, é digitar `pgtower`.
 Antes de mudar qualquer coisa, confere a máquina e mostra o plano; no fim, prova que tudo responde.
 
+**Da mesma família, da 9Level:** o pgrunway é a pista, onde o servidor decola; o
+[pgtower](https://github.com/9level/pgtower) é a torre, que administra a frota; o
+[pghangar](https://github.com/9level/pghangar) é o hangar, onde as cópias dos bancos são preparadas. O pgrunway já
+deixa as duas ferramentas no servidor.
+
 ## Para quem é
 
 | É para você se | Não é para você se |
@@ -33,7 +38,7 @@ Antes de mudar qualquer coisa, confere a máquina e mostra o plano; no fim, prov
 | quer a mesma instalação, conferida e repetível, em cada servidor | o servidor não é Ubuntu 24.04 ou 26.04 |
 | usa ou vai usar pgvector (busca por similaridade, RAG) | precisa de replicação ou alta disponibilidade |
 
-## Siga-me: da máquina zerada à primeira aplicação
+## Siga-me: da máquina zerada ao servidor administrado
 
 ### 1. Instale
 
@@ -87,7 +92,20 @@ sudo systemctl reload postgresql
 Na estação, `postgres://deploy@IP-DO-SERVIDOR:5432/postgres?sslmode=require`, com a senha do `~/.pgpass` do servidor.
 Sem abrir nada na rede, um túnel SSH também serve: `ssh -L 5432:127.0.0.1:5432 deploy@servidor`.
 
-### 4. Bancos de aplicações (opcional)
+### 4. Cópias e restores com o pghangar
+
+O pghangar copia bancos entre servidores (a produção para um dev ou homolog, por exemplo) por `pg_dump` e
+`pg_restore` em containers, e restaura um dump de fora.
+
+**Este servidor recebe as cópias:** `sudo ./install.sh --com-docker` instala o Docker e o pghangar. Depois,
+`sudo pghangar`: na aba 6, `b` baixa as imagens do PostgreSQL e `g` gera a chave SSH; na aba 3, cadastre a origem
+(acesso `ssh`) e este servidor como destino: `127.0.0.1:5432`, o seu superusuário e a senha do `~/.pgpass`.
+
+**O pghangar está em outra máquina** e este servidor é a origem ou o destino dele: cole no `~/.ssh/authorized_keys`
+do seu usuário a linha que o pghangar mostra (aba 6, tecla `l`). Ela só abre o túnel até a porta do banco, mais
+nada. No cadastro dele: acesso `ssh`, banco `127.0.0.1:5432`, o seu superusuário e a senha do `~/.pgpass`.
+
+### 5. Bancos de aplicações (opcional)
 
 Para uma aplicação, um login **dono** do banco dela, sem superusuário, e a rede dela liberada como acima:
 
@@ -100,11 +118,10 @@ sudo -u postgres psql -c "CREATE DATABASE app OWNER app"
 hostssl all app 10.0.10.0/24 scram-sha-256
 ```
 
-### 5. Aplicações em containers nesta mesma máquina (opcional)
+### 6. Aplicações em containers nesta mesma máquina (opcional)
 
-`sudo ./install.sh --com-docker` instala também o Docker Engine e o Compose oficiais, libera as redes dele no
-`pg_hba.conf` (com senha; o seu superusuário também entra por elas, para ferramentas que rodam em containers) e cria
-a pasta `/docker`. A verificação final entra no Postgres de dentro de containers. No `compose.yaml`:
+`sudo ./install.sh --com-docker` instala também o Docker Engine e o Compose oficiais (e o pghangar), libera as
+redes do Docker no `pg_hba.conf` (com senha) e cria a pasta `/docker`. A verificação final entra no Postgres de dentro de containers. No `compose.yaml`:
 
 ```yaml
 services:
@@ -122,7 +139,7 @@ Sem opção nenhuma é o caso comum.
 | Opção | Para quê |
 |---|---|
 | `--checar` | só confere a máquina e mostra o plano; não muda nada |
-| `--com-docker` | instala também o Docker, para projetos em containers nesta máquina |
+| `--com-docker` | instala também o Docker e o pghangar, para containers e cópias nesta máquina |
 | `-y`, `--sim` | não pergunta (automação) |
 
 Raramente: `--usuario NOME` (outro usuário Linux como administrador), `--pg N` (outra versão do PostgreSQL),
@@ -141,16 +158,17 @@ com `--com-docker`, `--pasta`, `--docker-bip` e `--docker-pool`. Detalhes: `./in
   depois, `ALTER EXTENSION vector UPDATE` em cada banco.
 - **O certificado SSL é o autoassinado do Ubuntu:** basta para `sslmode=require`; para `verify-full`, troque por um
   da sua CA.
-- **O pgtower** vem numa versão fixa, com o SHA256 conferido, e avisa sozinho quando há versão nova. Sem acesso
-  ao GitHub, o banco fica pronto do mesmo jeito e só o pgtower fica para depois. Um `config.yml` do pgtower que já
-  existe não é tocado (o servidor entra pela tecla `l`).
+- **O pgtower e o pghangar** vêm em versões fixas, com o SHA256 do release conferido. Sem acesso ao GitHub, o banco
+  fica pronto do mesmo jeito e só as ferramentas ficam para depois (`PGR_PGTOWER_BASE` e `PGR_PGHANGAR_BASE` apontam
+  para um espelho). Um `config.yml` do pgtower que já existe não é tocado (o servidor entra pela tecla `l`). O
+  pghangar só tem binário para amd64.
 - **O registro** de cada execução fica em `/var/log/pgrunway/`.
 
 ## Desenvolvimento
 
 `teste/rodar.sh [26.04|24.04]` roda o instalador num Ubuntu descartável (container com systemd): as recusas, a
 instalação com o superusuário e o pgtower, uma aplicação liberada no `pg_hba.conf`, o mesmo servidor ganhando
-`--com-docker` e as repetições, que não podem mudar nada, nem a senha. É o que o [CI](.github/workflows/ci.yml) roda a cada mudança. As imagens são de uma execução
+`--com-docker` com o pghangar e as repetições, que não podem mudar nada, nem a senha. É o que o [CI](.github/workflows/ci.yml) roda a cada mudança. As imagens são de uma execução
 real (`docs/demo/capturar.sh` e `docs/demo/gravar.sh`). Mudanças: [CHANGELOG.md](CHANGELOG.md).
 
 ## Licença

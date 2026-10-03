@@ -1,5 +1,5 @@
-Script started on 2026-10-03 14:02:34-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo ./install.sh " <not executed on terminal>]
-[1mpgrunway 0.5.0[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
+Script started on 2026-10-03 14:26:07-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo ./install.sh " <not executed on terminal>]
+[1mpgrunway 0.6.0[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
 nova, física ou virtual, conferida antes e testada no fim.
 
   1. Confere a máquina: sistema, memória, disco e o que já está instalado
@@ -16,7 +16,7 @@ nova, física ou virtual, conferida antes e testada no fim.
   [32m✓[0m arquitetura: amd64
   [32m✓[0m systemd ativo
   [32m✓[0m memória: 61 GB, 16 núcleo(s)
-  [32m✓[0m disco: 52 GB livres em /
+  [32m✓[0m disco: 50 GB livres em /
   disco do sistema: rotativo ou não informado (SSD numa máquina virtual: --disco ssd)
   [32m✓[0m repositório do PostgreSQL (PGDG) tem o resolute
   [32m✓[0m quem administra: deploy (superusuário do Postgres, senha no /home/deploy/.pgpass)
@@ -34,7 +34,7 @@ nova, física ou virtual, conferida antes e testada no fim.
       [2mmax_parallel_workers_per_gather = 4[0m
   pg_hba.conf: o postgres nunca entra de outra máquina; as aplicações, você libera depois
   Superusuário deploy (senha no /home/deploy/.pgpass) e pgtower v0.13.1 apontado para cá
-  Docker: não instala (para projetos em containers nesta máquina, --com-docker)
+  Docker e pghangar: não instala (para containers e cópias nesta máquina, --com-docker)
 
 Seguir com a instalação? [s/N] s
 
@@ -52,7 +52,7 @@ Seguir com a instalação? [s/N] s
     cópia anterior em /etc/postgresql/18/main/pg_hba.conf.antes-pgrunway
   [32m✓[0m Postgres reiniciado: 4 ajuste(s) só valem reiniciando
 
-[1m== 5. Superusuário e pgtower[0m
+[1m== 5. Superusuário e ferramentas[0m
   [32m✓[0m superusuário deploy criado; a senha está no /home/deploy/.pgpass (só deploy lê)
   [32m✓[0m pgtower v0.13.1 instalado em /usr/local/bin (SHA256 conferido)
   [32m✓[0m pgtower de deploy apontado para este servidor (pgr-demo): é só digitar pgtower
@@ -77,6 +77,6 @@ De outra máquina (o pgtower na sua estação), libere o IP dela no fim do pg_hb
   sudo systemctl reload postgresql
   e na estação: postgres://deploy@10.251.99.3:5432/postgres?sslmode=require
   [2m(a senha é a mesma do /home/deploy/.pgpass daqui)[0m
-[2mRegistro completo: /var/log/pgrunway/20261003-170236.log[0m
+[2mRegistro completo: /var/log/pgrunway/20261003-172609.log[0m
 
-Script done on 2026-10-03 14:03:49-03:00 [COMMAND_EXIT_CODE="0"]
+Script done on 2026-10-03 14:27:26-03:00 [COMMAND_EXIT_CODE="0"]

@@ -1,5 +1,16 @@
 # Mudanças
 
+## 0.6.0 (03/10/2026)
+
+- Com `--com-docker`, instala também o [pghangar](https://github.com/9level/pghangar) (versão fixa, SHA256 do
+  release conferido), que copia e restaura bancos entre servidores em containers. Fica em `/opt/pghangar` e em
+  `/usr/local/bin`; o resumo final mostra como começar (`sudo pghangar`).
+- `PGR_PGTOWER_BASE` e `PGR_PGHANGAR_BASE` apontam os downloads para um espelho (`file://` também serve).
+- O `SERVIDOR.md` da pasta `/docker` diz quem administra e como usar as ferramentas.
+- README: a família pgrunway, pgtower e pghangar e como usar o pghangar daqui ou de outra máquina.
+- Correção: o `max_wal_size` dependia do espaço livre no disco, que muda; rodando de novo, a configuração podia ir e
+  voltar (e pedir reinício). Agora depende do tamanho do disco.
+
 ## 0.5.0 (03/10/2026)
 
 **Sai pronto para administrar.**
