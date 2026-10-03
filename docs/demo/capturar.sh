@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Grava a saída real do install.sh, com o tempo de cada linha, para as imagens do README (docs/demo/gravar.sh as
-# reproduz no VHS). Roda num Ubuntu 26.04 descartável (teste/comum.sh), como o usuário "deploy" via sudo:
-#   docs/demo/captura/instalacao.*   instalação completa, respondendo "s" à pergunta
-#   docs/demo/captura/recusa.*       máquina cuja rede cruza com a do Docker: o instalador para e explica
+# reproduz no VHS). Roda em Ubuntus descartáveis (teste/comum.sh), como o usuário "deploy" via sudo:
+#   docs/demo/captura/instalacao.*   26.04: servidor só de banco, aplicações de 10.0.10.0/24, respondendo "s"
+#   docs/demo/captura/recusa.*       24.04 com o PostgreSQL 16 do Ubuntu já instalado: o instalador para e explica
 # Precisa de Docker e de internet; apaga os containers no fim.
 
 set -Eeuo pipefail
@@ -10,8 +10,8 @@ set -Eeuo pipefail
 # shellcheck source=teste/comum.sh
 . "$(dirname "$0")/../../teste/comum.sh"
 SAIDA=$RAIZ/docs/demo/captura
-NOME=pgi-demo
-REDE=pgi-demo
+NOME=pgr-demo
+REDE=pgr-demo
 
 limpar() {
 	derrubar "$NOME" "$NOME-recusa"
@@ -19,10 +19,11 @@ limpar() {
 }
 trap limpar EXIT
 
-# gravar NOME_DO_ARQUIVO CONTAINER [RESPOSTA]: roda o instalador num terminal de verdade e grava saída e tempos. A
-# resposta só é digitada quando a pergunta aparece, como faria uma pessoa.
+# gravar NOME_DO_ARQUIVO CONTAINER RESPOSTA [OPÇÕES]: roda o instalador num terminal de verdade e grava saída e
+# tempos. A resposta (vazia: nenhuma) só é digitada quando a pergunta aparece, como faria uma pessoa.
 gravar() {
-	local arq=$SAIDA/$1 container=$2 resposta=${3:-}
+	local nome=$1 arq=$SAIDA/$1 container=$2 resposta=$3
+	shift 3
 	rm -f "$arq.log" "$arq.tempo"
 	{
 		if [[ -n $resposta ]]; then
@@ -31,9 +32,9 @@ gravar() {
 			printf '%s\n' "$resposta"
 		fi
 	} | script -q -f -E never --log-out "$arq.log" --log-timing "$arq.tempo" \
-		-c "docker exec -it -e SUDO_USER=deploy -w /pginstall $container ./install.sh" >/dev/null || true
+		-c "docker exec -it -e SUDO_USER=deploy -w /pgrunway $container ./install.sh $*" >/dev/null || true
 	sem_nulos "$arq"
-	echo "gravado: docs/demo/captura/$1 ($(wc -l <"$arq.log") linhas)"
+	echo "gravado: docs/demo/captura/$nome ($(wc -l <"$arq.log") linhas)"
 }
 
 # sem_nulos ARQUIVO: o docker exec manda às vezes um byte nulo no começo, que chega cru ou já ecoado pelo terminal
@@ -60,13 +61,15 @@ sem_nulos() {
 
 mkdir -p "$SAIDA"
 construir_imagem 26.04
+construir_imagem 24.04
 limpar
 docker network create --subnet 10.251.99.0/24 "$REDE" >/dev/null
 
-subir "$NOME-recusa" bridge 26.04 # a rede padrão do Docker de fora cruza com a do Docker que seria instalado
-docker exec "$NOME-recusa" useradd -m deploy
-gravar recusa "$NOME-recusa"
+# Recusa: alguém já instalou o PostgreSQL do Ubuntu (16, no 24.04) antes
+subir "$NOME-recusa" "$REDE" 24.04
+docker exec "$NOME-recusa" sh -c 'useradd -m deploy && apt-get update -q >/dev/null && apt-get install -y -q postgresql >/dev/null 2>&1'
+gravar recusa "$NOME-recusa" ''
 
 subir "$NOME" "$REDE" 26.04
 docker exec "$NOME" useradd -m deploy
-gravar instalacao "$NOME" s
+gravar instalacao "$NOME" s --liberar 10.0.10.0/24

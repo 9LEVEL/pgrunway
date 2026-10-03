@@ -1,5 +1,20 @@
 # Mudanças
 
+## 0.3.0 (03/10/2026)
+
+**O nome passa a ser pgrunway** (antes pginstall.srv), e o foco, o servidor PostgreSQL.
+
+- **Docker opcional** (`--com-docker`): sem ele, nada de Docker, pasta `/docker` ou redes de containers no
+  `pg_hba.conf`. `--usuario`, `--pasta`, `--docker-bip`, `--docker-pool` e `--cloudflared` só valem com ele.
+- **`--liberar CIDR`**: as redes de onde as aplicações entram, só com SSL e senha, e o `postgres` nunca. Sem nada
+  liberado (nem Docker), o Postgres só escuta na própria máquina. `--liberar 0.0.0.0/0` é recusado.
+- Servidor só de banco: 25% da memória para o cache e 75% de cache do sistema (com `--com-docker`, 20% e 60%).
+- A verificação entra com senha pela rede da própria máquina e confere o SSL das redes liberadas; os testes de
+  dentro de containers ficam para `--com-docker`.
+- Novos nomes: `conf.d/90-pgrunway.conf`, `/etc/apt/preferences.d/pgrunway-pgdg`, `/var/log/pgrunway/`, bloco
+  `pgrunway` no `pg_hba.conf` e variáveis `PGR_DOCKER_BIP`, `PGR_DOCKER_POOL` e `PGR_CLOUDFLARED_IMAGEM`.
+- Mensagens em até 92 colunas; o resumo final mostra os comandos para criar o banco de uma aplicação.
+
 ## 0.2.0 (03/10/2026)
 
 - A tela inicial diz que o instalador é para projetos em **containers Docker**, com o PostgreSQL no host.

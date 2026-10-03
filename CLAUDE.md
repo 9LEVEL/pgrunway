@@ -1,8 +1,8 @@
 # Instruções para agentes
 
-`pginstall.srv` prepara um servidor Ubuntu para rodar projetos em containers Docker, com PostgreSQL + pgvector no
-host: Docker oficial, ajustes, `pg_hba.conf` para as redes do Docker e a pasta dos projetos. Um script só,
-`install.sh`, em bash.
+`pgrunway` (antes pginstall.srv) coloca um servidor PostgreSQL + pgvector no ar numa máquina Ubuntu nova: ajustes
+proporcionais, `pg_hba.conf` em que só entra quem for liberado (`--liberar`, SSL e senha) e, com `--com-docker`, o
+Docker oficial para projetos em containers na mesma máquina. Um script só, `install.sh`, em bash.
 
 **Idioma:** português do Brasil em tudo: mensagens do script, documentos e commits.
 
@@ -14,8 +14,8 @@ host: Docker oficial, ajustes, `pg_hba.conf` para as redes do Docker e a pasta d
 | **Nada é apagado nem desinstalado** | Conflito para a instalação e explica; quem remove é o sysadmin |
 | **Rodar de novo não estraga** | Cada etapa confere o estado e só grava o que mudou (`gravar_se_mudou`); o bloco do `pg_hba.conf` é regravado entre os marcadores |
 | **Senha nunca em claro num comando** | Nem em argumento nem no texto de um SQL: use o verificador SCRAM (`scram`) ou o `\password` |
-| **`set -e` sem armadilha** | Não termine um `if`, `for` ou função com `condição && ação`: se a condição for falsa, o script para. Use `if`. Pipeline que pode não achar nada dentro de `$(...)` leva `\|\| true` |
-| **Mensagens em até 100 colunas** | Cabem num terminal comum e nas imagens do README |
+| **`set -e` sem armadilha** | Não termine um `if`, `for` ou função com `condição && ação`: se a condição for falsa, o script para. Use `if`. Pipeline que pode não achar nada dentro de `$(...)` leva `\|\| true`, e `$(cond && echo x)` numa atribuição falha a atribuição inteira |
+| **Mensagens em até 92 colunas** | Cabem num terminal comum e nas imagens do README (o terminal da gravação tem ~96) |
 | **Commits sem coautoria de ferramentas** | Sem linhas `Co-Authored-By` nem rodapés de geração automática |
 
 ## Antes de dizer que terminou
