@@ -26,6 +26,7 @@ docker run --rm -v "$PWD:/m:ro" -w /m koalaman/shellcheck:stable -x -S style ins
 teste/rodar.sh 26.04      # e teste/rodar.sh 24.04 quando mexer no PostgreSQL, no pgvector ou nos repositórios
 ```
 
+Versão nova do pgtower: `PGTOWER_VERSAO` no `install.sh` (o download confere o SHA256 do release).
 Mudou uma mensagem que aparece nas imagens? `docs/demo/capturar.sh` (grava a saída real) e `docs/demo/gravar.sh`
 (regrava `docs/img`). Versão nova: `VERSAO` no `install.sh`, `CHANGELOG.md` e o link do tar.gz no README.
 

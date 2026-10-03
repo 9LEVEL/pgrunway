@@ -1,5 +1,17 @@
 # Mudanças
 
+## 0.5.0 (03/10/2026)
+
+**Sai pronto para administrar.**
+
+- Cria o seu superusuário de administração, com o nome do seu usuário Linux (quem rodou o `sudo`; como root direto,
+  `dba`). Entra pelo socket sem senha; a senha, para entrar de outra máquina, fica no `~/.pgpass`, só seu. Rodar de
+  novo não a troca. `--usuario` passa a valer sempre: quem administra.
+- Baixa o [pgtower](https://github.com/9level/pgtower) (versão fixa, SHA256 conferido) e deixa este servidor
+  cadastrado no `config.yml` de quem administra, com a memória e os núcleos: é digitar `pgtower`.
+- O resumo final mostra como administrar e a linha do `pg_hba.conf` com o IP da sua estação, de onde veio o SSH.
+- Sai do caminho principal o banco da primeira aplicação; fica como passo opcional no README.
+
 ## 0.4.0 (03/10/2026)
 
 **Menos opções: o caso comum é `sudo ./install.sh`, sem nada.**

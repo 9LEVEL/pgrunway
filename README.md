@@ -21,8 +21,9 @@ sudo ./install.sh
 
 Numa máquina Ubuntu nova, física ou virtual, o `install.sh` atualiza o sistema, instala o PostgreSQL e o pgvector
 (com a versão travada), ajusta o Postgres ao tamanho da máquina e fecha o `pg_hba.conf`: o superusuário `postgres`
-nunca entra de outra máquina. Antes de mudar qualquer coisa, confere a máquina e mostra o plano; no fim, prova que o
-banco responde como deveria.
+nunca entra de outra máquina. Cria o **seu** superusuário de administração e deixa o
+[pgtower](https://github.com/9level/pgtower) instalado e apontado para o servidor: terminou, é digitar `pgtower`.
+Antes de mudar qualquer coisa, confere a máquina e mostra o plano; no fim, prova que tudo responde.
 
 ## Para quem é
 
@@ -51,47 +52,59 @@ Esta é a tela inicial: o que ele vai fazer, a conferência da máquina e o plan
 
 ### 2. Acompanhe até o fim
 
-Cada etapa mostra o que fez. A verificação final cria um banco e um login temporários, confere o pgvector com um
-índice HNSW, entra com senha e confere o SSL; depois apaga tudo o que criou. No fim, os comandos do próximo passo.
+Cada etapa mostra o que fez. A verificação final confere o pgvector com um índice HNSW, o SSL, o seu superusuário
+(com a senha e sem senha) e o pgtower; depois apaga o banco e o login que criou para o teste.
 
-<p align="center"><img src="docs/img/instalacao.png" alt="Etapas da instalação, a verificação final e o próximo passo" width="820"></p>
+<p align="center"><img src="docs/img/instalacao.png" alt="Etapas da instalação, a verificação final e como administrar" width="820"></p>
 
 Se algo estiver errado, ele para **antes** de mudar qualquer coisa e diz o que fazer. Aqui, a máquina já tinha o
 PostgreSQL 16 do Ubuntu:
 
 <p align="center"><img src="docs/img/recusa.png" alt="Conferência recusando a instalação: já há PostgreSQL 16 na máquina" width="820"></p>
 
-### 3. Crie o banco da primeira aplicação
+### 3. Administre
 
-Cada aplicação tem o seu login, **dono** do banco dela, sem superusuário. O `\password` pede a senha e manda só o
-hash ao servidor:
+O superusuário de administração tem o nome do seu usuário Linux (quem rodou o `sudo`); rodando como root direto, ele
+se chama `dba`. A senha fica no seu `~/.pgpass`, que só você lê, e rodar o pgrunway de novo não a troca.
 
-```bash
-sudo -u postgres psql -c "CREATE ROLE app LOGIN" -c "\password app"
-sudo -u postgres psql -c "CREATE DATABASE app OWNER app"
-sudo -u postgres psql -d app -c "CREATE EXTENSION vector"
-```
+| Daqui do servidor | Como |
+|---|---|
+| pgtower | `pgtower`: já abre este servidor, sem senha |
+| psql | `psql -d postgres`, sem senha |
 
-### 4. Libere a rede da aplicação
-
-De fábrica, só a própria máquina entra. Se a aplicação está noutra máquina, acrescente uma linha **no fim** do
-`/etc/postgresql/18/main/pg_hba.conf`, com a rede dela, e recarregue:
+**De outra máquina** (o pgtower na sua estação, uma ferramenta de cópia, um restore): libere o IP dela com uma linha
+no fim do `/etc/postgresql/18/main/pg_hba.conf` e recarregue. O resumo final já mostra a linha com o IP de onde veio
+a sua sessão SSH:
 
 ```
-hostssl all all 10.0.10.0/24 scram-sha-256
+hostssl all deploy 10.0.0.50/32 scram-sha-256
 ```
 
 ```bash
 sudo systemctl reload postgresql
 ```
 
-A aplicação conecta com SSL: `postgres://app:SENHA@IP-DO-SERVIDOR:5432/app?sslmode=require`
+Na estação, `postgres://deploy@IP-DO-SERVIDOR:5432/postgres?sslmode=require`, com a senha do `~/.pgpass` do servidor.
+Sem abrir nada na rede, um túnel SSH também serve: `ssh -L 5432:127.0.0.1:5432 deploy@servidor`.
+
+### 4. Bancos de aplicações (opcional)
+
+Para uma aplicação, um login **dono** do banco dela, sem superusuário, e a rede dela liberada como acima:
+
+```bash
+sudo -u postgres psql -c "CREATE ROLE app LOGIN" -c "\password app"
+sudo -u postgres psql -c "CREATE DATABASE app OWNER app"
+```
+
+```
+hostssl all app 10.0.10.0/24 scram-sha-256
+```
 
 ### 5. Aplicações em containers nesta mesma máquina (opcional)
 
 `sudo ./install.sh --com-docker` instala também o Docker Engine e o Compose oficiais, libera as redes dele no
-`pg_hba.conf` (com senha) e cria a pasta `/docker`. A verificação final entra no Postgres de dentro de containers.
-No `compose.yaml`:
+`pg_hba.conf` (com senha; o seu superusuário também entra por elas, para ferramentas que rodam em containers) e cria
+a pasta `/docker`. A verificação final entra no Postgres de dentro de containers. No `compose.yaml`:
 
 ```yaml
 services:
@@ -112,9 +125,9 @@ Sem opção nenhuma é o caso comum.
 | `--com-docker` | instala também o Docker, para projetos em containers nesta máquina |
 | `-y`, `--sim` | não pergunta (automação) |
 
-Raramente: `--pg N` (outra versão do PostgreSQL), `--pgvector X.Y.Z` (versão exata do pgvector), `--disco ssd`
-(quando a máquina virtual não diz que o disco é SSD) e, com `--com-docker`, `--usuario`, `--pasta`, `--docker-bip`
-e `--docker-pool`. Detalhes: `./install.sh --ajuda`.
+Raramente: `--usuario NOME` (outro usuário Linux como administrador), `--pg N` (outra versão do PostgreSQL),
+`--pgvector X.Y.Z` (versão exata do pgvector), `--disco ssd` (quando a máquina virtual não diz que o disco é SSD) e,
+com `--com-docker`, `--pasta`, `--docker-bip` e `--docker-pool`. Detalhes: `./install.sh --ajuda`.
 
 ## Bom saber
 
@@ -128,14 +141,16 @@ e `--docker-pool`. Detalhes: `./install.sh --ajuda`.
   depois, `ALTER EXTENSION vector UPDATE` em cada banco.
 - **O certificado SSL é o autoassinado do Ubuntu:** basta para `sslmode=require`; para `verify-full`, troque por um
   da sua CA.
-- **O registro** de cada execução fica em `/var/log/pgrunway/`. Para administrar o servidor no dia a dia, veja o
-  [pgtower](https://github.com/9level/pgtower).
+- **O pgtower** vem numa versão fixa, com o SHA256 conferido, e avisa sozinho quando há versão nova. Sem acesso
+  ao GitHub, o banco fica pronto do mesmo jeito e só o pgtower fica para depois. Um `config.yml` do pgtower que já
+  existe não é tocado (o servidor entra pela tecla `l`).
+- **O registro** de cada execução fica em `/var/log/pgrunway/`.
 
 ## Desenvolvimento
 
 `teste/rodar.sh [26.04|24.04]` roda o instalador num Ubuntu descartável (container com systemd): as recusas, a
-instalação, uma aplicação liberada no `pg_hba.conf`, o mesmo servidor ganhando `--com-docker` e as repetições, que
-não podem mudar nada. É o que o [CI](.github/workflows/ci.yml) roda a cada mudança. As imagens são de uma execução
+instalação com o superusuário e o pgtower, uma aplicação liberada no `pg_hba.conf`, o mesmo servidor ganhando
+`--com-docker` e as repetições, que não podem mudar nada, nem a senha. É o que o [CI](.github/workflows/ci.yml) roda a cada mudança. As imagens são de uma execução
 real (`docs/demo/capturar.sh` e `docs/demo/gravar.sh`). Mudanças: [CHANGELOG.md](CHANGELOG.md).
 
 ## Licença

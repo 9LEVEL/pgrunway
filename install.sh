@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # pgrunway: coloca um servidor PostgreSQL no ar. É a primeira instalação de uma máquina Ubuntu nova, física ou
 # virtual: sistema atualizado, PostgreSQL e pgvector (travado numa versão), ajustes proporcionais à máquina e um
-# pg_hba.conf em que o superusuário postgres nunca entra pela rede. Com --com-docker, instala também o Docker para
-# projetos em containers na mesma máquina. Termina conferindo tudo com um banco e um login temporários.
+# pg_hba.conf em que o superusuário postgres nunca entra pela rede. Cria o seu superusuário de administração (senha
+# no ~/.pgpass) e deixa o pgtower instalado e apontado para este servidor. Com --com-docker, instala também o Docker
+# para projetos em containers na mesma máquina. Termina conferindo tudo com um banco e um login temporários.
 #
 #   sudo ./install.sh              explica, confere a máquina, mostra o plano e pede confirmação
 #   sudo ./install.sh --checar     só confere a máquina e mostra o plano; não muda nada
@@ -13,7 +14,7 @@
 
 set -Eeuo pipefail
 
-VERSAO=0.4.0
+VERSAO=0.5.0
 NOME=pgrunway
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -28,8 +29,13 @@ ATUALIZAR=0                    # apt upgrade: só na primeira instalação (o Po
 # Só com --com-docker: o Docker, as redes dele no pg_hba.conf e a pasta dos projetos
 DOCKER=0
 PASTA=/docker
-USUARIO=${SUDO_USER:-}
 SO_COM_DOCKER=()               # opções de Docker usadas sem --com-docker
+# Quem administra: o seu usuário Linux (quem chamou o sudo). O superusuário do Postgres tem o mesmo nome e entra sem
+# senha pelo socket; a senha, para entrar de outra máquina, fica no ~/.pgpass dele. Rodando como root direto: dba.
+USUARIO=${SUDO_USER:-}
+ADMIN='' CONTA='' CASA=''
+# pgtower: administração no terminal (https://github.com/9level/pgtower), baixado do GitHub com o SHA256 conferido
+PGTOWER_VERSAO=${PGR_PGTOWER_VERSAO:-v0.13.1}
 # Redes do Docker (daemon.json): a ponte padrão e de onde saem as redes do Compose. O pg_hba.conf libera as duas.
 DOCKER_BIP=${PGR_DOCKER_BIP:-172.17.0.1/16}
 DOCKER_POOL=${PGR_DOCKER_POOL:-172.18.0.0/16}
@@ -49,7 +55,7 @@ Raramente precisa:
   --pg N                versão principal do PostgreSQL (padrão: $PG)
   --pgvector X.Y.Z      versão exata do pgvector, travada (padrão: a mais nova, travada no que instalar)
   --disco ssd|hdd       tipo do disco, quando a detecção erra (comum em máquina virtual)
-  --usuario NOME        com --com-docker: quem entra no grupo docker (padrão: quem chamou o sudo)
+  --usuario NOME        quem administra: superusuário do Postgres e grupo docker (padrão: quem chamou o sudo)
   --pasta CAMINHO       com --com-docker: pasta dos projetos (padrão: $PASTA)
   --docker-bip CIDR     com --com-docker: rede da ponte do Docker (padrão: $DOCKER_BIP)
   --docker-pool CIDR    com --com-docker: redes do Compose, em blocos /24 (padrão: $DOCKER_POOL)
@@ -150,7 +156,7 @@ while (($#)); do
 	--disco) DISCO=${2:-} && shift ;;
 	--com-docker) DOCKER=1 ;;
 	--pasta) PASTA=${2:-} && SO_COM_DOCKER+=(--pasta) && shift ;;
-	--usuario) USUARIO=${2:-} && SO_COM_DOCKER+=(--usuario) && shift ;;
+	--usuario) USUARIO=${2:-} && shift ;;
 	--docker-bip) DOCKER_BIP=${2:-} && SO_COM_DOCKER+=(--docker-bip) && shift ;;
 	--docker-pool) DOCKER_POOL=${2:-} && SO_COM_DOCKER+=(--docker-pool) && shift ;;
 	-h | --ajuda | --help) ajuda && exit 0 ;;
@@ -175,6 +181,7 @@ explicar() {
 		"Na primeira vez, atualiza o sistema (apt upgrade)"
 		"PostgreSQL $PG e pgvector, com a versão do pgvector travada (um apt upgrade não troca)"
 		"Ajusta o Postgres ao tamanho da máquina; o superusuário postgres nunca entra de fora"
+		"Cria o seu superusuário de administração e instala o pgtower, já apontado para cá"
 	) i
 	if ((DOCKER)); then itens+=("Docker Engine e Compose oficiais, com as redes deles liberadas e a pasta $PASTA"); fi
 	itens+=("Teste final com um banco e um login temporários, apagados no fim")
@@ -273,6 +280,7 @@ checar_maquina() {
 	fi
 
 	checar_postgres
+	checar_admin
 	if ((DOCKER)); then
 		checar_docker
 		checar_pasta
@@ -383,16 +391,29 @@ print(bip, pools[0]["base"] if pools else "")' 2>/dev/null) && [[ $lidas != " " 
 	fi
 }
 
-checar_pasta() {
-	if [[ -n $USUARIO ]]; then
-		if id -u "$USUARIO" >/dev/null 2>&1; then
-			ok "usuário dos projetos: $USUARIO"
-		else
-			erro "usuário $USUARIO não existe (use --usuario)"
+# Quem administra: o usuário Linux de quem chamou o sudo (ou --usuario). O superusuário do Postgres tem o mesmo
+# nome, para entrar pelo socket sem senha. Rodando como root direto, o superusuário se chama dba.
+checar_admin() {
+	if [[ -n $USUARIO && $USUARIO != root ]]; then
+		if ! id -u "$USUARIO" >/dev/null 2>&1; then
+			erro "o usuário $USUARIO não existe neste servidor (use --usuario NOME)"
+			return
 		fi
+		CONTA=$USUARIO ADMIN=$USUARIO
 	else
-		aviso "nenhum usuário entra no grupo docker (rodando como root direto): use --usuario NOME"
+		CONTA=root ADMIN=dba
 	fi
+	CASA=$(getent passwd "$CONTA" | cut -d: -f6)
+	if [[ $ADMIN == postgres ]]; then
+		erro "o superusuário de administração não pode ser o postgres: use --usuario NOME"
+	elif [[ $ADMIN == "$CONTA" ]]; then
+		ok "quem administra: $ADMIN (superusuário do Postgres, senha no $CASA/.pgpass)"
+	else
+		info "rodando como root direto: o superusuário se chama dba (senha no /root/.pgpass)"
+	fi
+}
+
+checar_pasta() {
 	if [[ -e $PASTA && ! -d $PASTA ]]; then
 		erro "$PASTA existe e não é uma pasta"
 	elif [[ -d $PASTA ]] && [[ -n $(ls -A "$PASTA") ]]; then
@@ -485,9 +506,10 @@ mostrar_plano() {
 	grep -E '^(shared_buffers|effective_cache_size|work_mem|maintenance_work_mem|max_parallel_workers|random_page_cost)' <<<"$AJUSTES" |
 		sed "s/^/      ${D}/; s/$/${N}/"
 	info "pg_hba.conf: o postgres nunca entra de outra máquina; as aplicações, você libera depois"
+	info "Superusuário $ADMIN (senha no $CASA/.pgpass) e pgtower $PGTOWER_VERSAO apontado para cá"
 	if ((DOCKER)); then
 		info "Docker Engine, Buildx e Compose oficiais; redes $REDE_BIP e $REDE_POOL liberadas, com senha"
-		info "Pasta $PASTA (grupo docker${USUARIO:+, dono $USUARIO})"
+		info "Pasta $PASTA (grupo docker, dono $CONTA)"
 	else
 		info "Docker: não instala (para projetos em containers nesta máquina, --com-docker)"
 	fi
@@ -622,12 +644,12 @@ Signed-By: /etc/apt/keyrings/docker.asc" || true
 		ok "Docker instalado"
 	fi
 	rodar systemctl enable --now docker containerd
-	if [[ -n $USUARIO ]]; then
-		if id -nG "$USUARIO" | tr ' ' '\n' | grep -qx docker; then
-			ok "$USUARIO já está no grupo docker"
+	if [[ $CONTA != root ]]; then
+		if id -nG "$CONTA" | tr ' ' '\n' | grep -qx docker; then
+			ok "$CONTA já está no grupo docker"
 		else
-			rodar usermod -aG docker "$USUARIO"
-			ok "$USUARIO no grupo docker (vale no próximo login)"
+			rodar usermod -aG docker "$CONTA"
+			ok "$CONTA no grupo docker (vale no próximo login)"
 		fi
 	fi
 }
@@ -714,11 +736,99 @@ configurar_postgres() {
 }
 
 # ---------------------------------------------------------------------------------------------------------------
+# Superusuário de administração e pgtower
+
+administrar() {
+	passo "Superusuário e pgtower"
+	local pgpass=$CASA/.pgpass senha super
+	if [[ $(pgsql -c "select count(*) from pg_roles where rolname = '$ADMIN'") == 0 ]]; then
+		senha=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)
+		pgsql -q -c "CREATE ROLE \"$ADMIN\" LOGIN SUPERUSER PASSWORD '$(printf '%s' "$senha" | scram)'"
+		gravar_pgpass "$pgpass" "$senha"
+		ok "superusuário $ADMIN criado; a senha está no $pgpass (só $CONTA lê)"
+	else
+		super=$(pgsql -c "select rolsuper from pg_roles where rolname = '$ADMIN'")
+		if [[ $super == t ]]; then
+			ok "superusuário $ADMIN já existe: fica como está, com a mesma senha"
+		else
+			aviso "$ADMIN já existe e não é superusuário: fica como está (ALTER ROLE \"$ADMIN\" SUPERUSER)"
+		fi
+		if ! grep -qs ":$ADMIN:" "$pgpass"; then
+			info "  a senha de $ADMIN não está no $pgpass (para trocar: psql -d postgres -c '\\password')"
+		fi
+	fi
+	instalar_pgtower
+	configurar_pgtower
+}
+
+# gravar_pgpass ARQUIVO SENHA: a senha do superusuário para localhost e 127.0.0.1, só para quem administra. Linhas
+# antigas do mesmo login saem antes: o .pgpass usa a primeira que casar.
+gravar_pgpass() {
+	local arq=$1 senha=$2 tmp h
+	tmp=$(mktemp)
+	if [[ -f $arq ]]; then grep -v -E "^(localhost|127\.0\.0\.1):$PGPORT:\*:$ADMIN:" "$arq" >"$tmp" || true; fi
+	for h in localhost 127.0.0.1; do printf '%s:%s:*:%s:%s\n' "$h" "$PGPORT" "$ADMIN" "$senha" >>"$tmp"; done
+	install -m 600 -o "$CONTA" -g "$(id -gn "$CONTA")" "$tmp" "$arq"
+	rm -f "$tmp"
+}
+
+instalar_pgtower() {
+	if command -v pgtower >/dev/null; then
+		ok "pgtower já instalado ($(pgtower --version 2>/dev/null | head -n 1 || true)): fica"
+		return 0
+	fi
+	local base=https://github.com/9level/pgtower/releases/download/$PGTOWER_VERSAO
+	local nome=pgtower-$PGTOWER_VERSAO-linux-$ARQ tmp quer tem
+	tmp=$(mktemp -d)
+	if curl -fsSL -m 180 -o "$tmp/$nome" "$base/$nome" 2>>"$LOG" &&
+		curl -fsSL -m 30 -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" 2>>"$LOG"; then
+		quer=$(awk -v a="$nome" '$2 == a {print $1}' "$tmp/SHA256SUMS")
+		tem=$(sha256sum "$tmp/$nome" | awk '{print $1}')
+		if [[ -n $quer && $quer == "$tem" ]]; then
+			install -m 755 "$tmp/$nome" /usr/local/bin/pgtower
+			ok "pgtower $PGTOWER_VERSAO instalado em /usr/local/bin (SHA256 conferido)"
+		else
+			aviso "o SHA256 do pgtower não confere: não instalei (https://github.com/9level/pgtower)"
+		fi
+	else
+		aviso "não deu para baixar o pgtower do GitHub: o banco está pronto do mesmo jeito (veja o registro)"
+	fi
+	rm -rf "$tmp"
+}
+
+# O pgtower de quem administra já abre este servidor: pelo socket, sem senha (ou, para o dba, por localhost com o
+# .pgpass), com a memória e os núcleos para o assistente de ajustes. Um config.yml que já existe não é tocado.
+configurar_pgtower() {
+	local dir=$CASA/.config/pgtower nome host=/var/run/postgresql grupo
+	nome=$(hostname -s)
+	grupo=$(id -gn "$CONTA")
+	if [[ $ADMIN != "$CONTA" ]]; then host=localhost; fi
+	if [[ -e $dir/config.yml ]]; then
+		info "o pgtower de $CONTA já tem config.yml: mantido (este servidor entra pela tecla l)"
+		return 0
+	fi
+	runuser -u "$CONTA" -- mkdir -p -m 700 "$dir"
+	gravar_se_mudou "$dir/config.yml" 600 "$CONTA:$grupo" "# Gerado pelo $NOME: este servidor. Outros servidores: tecla S no pgtower.
+version: 2
+default: $nome
+connections:
+  - name: $nome
+    host: $host
+    port: $PGPORT
+    user: $ADMIN
+    database: postgres
+    sslmode: disable
+    host_ram_mb: $RAM_MB
+    host_cpus: $CPUS" || true
+	ok "pgtower de $CONTA apontado para este servidor ($nome): é só digitar pgtower"
+}
+
+# ---------------------------------------------------------------------------------------------------------------
 # 5. Pasta dos projetos
 
 preparar_pasta() {
 	passo "Pasta dos projetos"
-	local dono=${USUARIO:-root}
+	local dono=$CONTA
 	if [[ ! -d $PASTA ]] || [[ -z $(ls -A "$PASTA") ]]; then
 		install -d -m 2775 -o "$dono" -g docker "$PASTA"
 		ok "$PASTA ($dono:docker, 2775: o que nascer aqui fica do grupo docker)"
@@ -813,6 +923,28 @@ verificar() {
 	else
 		aviso "SSL desligado: ligue antes de liberar aplicações de outras máquinas (ssl = on)"
 	fi
+	local entrou
+	entrou=$(runuser -u "$CONTA" -- env PGPASSFILE="$CASA/.pgpass" PGCONNECT_TIMEOUT=5 psql -X -At -h 127.0.0.1 \
+		-p "$PGPORT" -U "$ADMIN" -d postgres -c "select rolsuper from pg_roles where rolname = current_user" 2>>"$LOG" || true)
+	if [[ $entrou == t ]]; then
+		ok "superusuário $ADMIN entra com a senha do $CASA/.pgpass"
+	else
+		erro "o superusuário $ADMIN não entrou com a senha do $CASA/.pgpass: veja o registro"
+	fi
+	if [[ $ADMIN == "$CONTA" ]]; then
+		if [[ $(runuser -u "$CONTA" -- psql -X -At -d postgres -c "select current_user" 2>>"$LOG" || true) == "$ADMIN" ]]; then
+			ok "e pelo socket, sem senha (psql -d postgres)"
+		else
+			erro "$ADMIN não entrou pelo socket: veja o registro"
+		fi
+	fi
+	if command -v pgtower >/dev/null; then
+		if runuser -u "$CONTA" -- env -u XDG_CONFIG_HOME HOME="$CASA" pgtower --list 2>>"$LOG" | grep -q -F "$(hostname -s)"; then
+			ok "pgtower: este servidor cadastrado para $CONTA"
+		else
+			aviso "o pgtower não listou este servidor: confira com pgtower --list"
+		fi
+	fi
 	if ((DOCKER)); then verificar_containers "$senha"; fi
 	limpar_teste
 	TESTE_BANCO='' TESTE_ROLE='' TESTE_REDE=''
@@ -858,6 +990,24 @@ verificar_containers() {
 	if ((!tinha_imagem)); then docker image rm "$imagem" >>"$LOG" 2>&1 || true; fi
 }
 
+# O que quem administra precisa saber: o superusuário, como entrar daqui e como liberar a estação dele. O IP da
+# estação vem da sessão SSH em que o pgrunway rodou (who -m); sem SSH, fica o lugar para preencher.
+resumo_admin() {
+	local estacao ip_srv mascara=32 psql_aqui="psql -d postgres" pgtower_aqui="pgtower"
+	estacao=$(who -m 2>/dev/null | sed -nE 's/.*\(([0-9A-Fa-f.:]+)\).*/\1/p' | head -n 1 || true)
+	ip_srv=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p' | head -n 1 || true)
+	if [[ $estacao == *:* ]]; then mascara=128; fi
+	if [[ $ADMIN != "$CONTA" ]]; then psql_aqui="psql -h localhost -U $ADMIN -d postgres"; fi
+	if ! command -v pgtower >/dev/null; then pgtower_aqui="(pgtower não instalado)"; fi
+	printf '\n%s\n' "Para administrar, o superusuário ${B}$ADMIN${N} (senha no $CASA/.pgpass, só $CONTA lê):"
+	printf '  %-32s %s\n' "$pgtower_aqui" "abre este servidor" "$psql_aqui" "o mesmo, no psql"
+	printf '%s\n' "De outra máquina (o pgtower na sua estação), libere o IP dela no fim do pg_hba.conf:"
+	printf '  %s\n' "hostssl all $ADMIN ${estacao:-IP-DA-ESTACAO}/$mascara scram-sha-256" "sudo systemctl reload postgresql"
+	printf '  %s\n' "e na estação: postgres://$ADMIN@${ip_srv:-IP-DO-SERVIDOR}:$PGPORT/postgres?sslmode=require"
+	printf '  %s\n' "${D}(a senha é a mesma do $CASA/.pgpass daqui)${N}"
+	if [[ -n $estacao ]]; then printf '%s\n' "${D}($estacao é de onde veio esta sessão SSH)${N}"; fi
+}
+
 perguntar() {
 	local r
 	read -r -p "$1 [s/N] " r
@@ -897,6 +1047,7 @@ main() {
 	instalar_postgres
 	if ((DOCKER)); then instalar_docker; fi
 	configurar_postgres
+	administrar
 	if ((DOCKER)); then preparar_pasta; fi
 	verificar
 
@@ -906,6 +1057,7 @@ main() {
 	if ((DOCKER)); then
 		versoes+=" · Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null) · Compose $(docker compose version --short 2>/dev/null)"
 	fi
+	if command -v pgtower >/dev/null; then versoes+=" · $(pgtower --version 2>/dev/null | head -n 1 || true)"; fi
 	info "$versoes"
 	if ((${#AVISOS[@]})); then
 		printf '\n%s\n' "${Y}Avisos:${N}"
@@ -917,17 +1069,10 @@ main() {
 		printf '%s\n' "${D}Registro completo: $LOG${N}"
 		exit 1
 	fi
-	cat <<-EOF
-
-		Próximo passo, o banco de cada aplicação (o \\password manda só o hash da senha):
-		  sudo -u postgres psql -c "CREATE ROLE app LOGIN" -c "\\password app"
-		  sudo -u postgres psql -c "CREATE DATABASE app OWNER app"
-		  sudo -u postgres psql -d app -c "CREATE EXTENSION vector"
-		Aplicação em outra máquina? Libere a rede dela com uma linha no fim do pg_hba.conf:
-		  hostssl all all 10.0.10.0/24 scram-sha-256        (/etc/postgresql/$PG/main/pg_hba.conf)
-		  sudo systemctl reload postgresql
-	EOF
-	if ((DOCKER)) && [[ -n $USUARIO ]]; then printf '%s\n' "O grupo docker vale para $USUARIO no próximo login; resumo em $PASTA/SERVIDOR.md."; fi
+	resumo_admin
+	if ((DOCKER)) && [[ $CONTA != root ]]; then
+		printf '%s\n' "O grupo docker vale para $CONTA no próximo login; resumo em $PASTA/SERVIDOR.md."
+	fi
 	printf '%s\n' "${D}Registro completo: $LOG${N}"
 }
 
