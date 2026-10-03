@@ -1,12 +1,12 @@
-Script started on 2026-10-03 12:40:41-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo ./install.sh --liberar 10.0.10.0/24" <not executed on terminal>]
-[1mpgrunway 0.3.0[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
+Script started on 2026-10-03 13:09:59-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo ./install.sh " <not executed on terminal>]
+[1mpgrunway 0.4.0[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
 nova, física ou virtual, conferida antes e testada no fim.
 
   1. Confere a máquina: sistema, memória, disco e o que já está instalado
-  2. PostgreSQL 18 e pgvector, com a versão do pgvector travada (um apt upgrade não troca)
-  3. Ajusta o Postgres ao tamanho da máquina e o pg_hba.conf: só entra quem você liberar,
-     com senha, e o superusuário postgres nunca pela rede
-  4. Teste final com um banco e um login temporários, apagados no fim
+  2. Na primeira vez, atualiza o sistema (apt upgrade)
+  3. PostgreSQL 18 e pgvector, com a versão do pgvector travada (um apt upgrade não troca)
+  4. Ajusta o Postgres ao tamanho da máquina; o superusuário postgres nunca entra de fora
+  5. Teste final com um banco e um login temporários, apagados no fim
 
 [2mNada é apagado nem desinstalado. Rodar de novo confere e mantém o que já está feito.[0m
 
@@ -15,28 +15,28 @@ nova, física ou virtual, conferida antes e testada no fim.
   [32m✓[0m arquitetura: amd64
   [32m✓[0m systemd ativo
   [32m✓[0m memória: 61 GB, 16 núcleo(s)
-  [32m✓[0m disco: 56 GB livres em /
+  [32m✓[0m disco: 52 GB livres em /
   disco do sistema: rotativo ou não informado (SSD numa máquina virtual: --disco ssd)
   [32m✓[0m repositório do PostgreSQL (PGDG) tem o resolute
-  [32m✓[0m redes liberadas para as aplicações: 10.0.10.0/24
 
 [1m== Plano[0m
-  PostgreSQL 18 do Ubuntu, se ele tiver a 18; senão do PGDG (decide depois do apt update)
+  Primeira instalação: antes de tudo, atualiza o sistema (apt upgrade)
+  PostgreSQL 18 (do Ubuntu, ou do PGDG se o Ubuntu não tiver a 18)
   pgvector do PGDG, versão mais nova, travada
   Ajustes do Postgres em /etc/postgresql/18/main/conf.d/90-pgrunway.conf:
-      [2mlisten_addresses = '*'[0m
       [2mshared_buffers = 15773MB[0m
       [2meffective_cache_size = 47321MB[0m
       [2mmaintenance_work_mem = 2048MB[0m
       [2mwork_mem = 63MB[0m
       [2mmax_parallel_workers = 16[0m
       [2mmax_parallel_workers_per_gather = 4[0m
-  Aplicações entram de 10.0.10.0/24, só com SSL e senha; o postgres nunca pela rede
+  pg_hba.conf: o postgres nunca entra de outra máquina; as aplicações, você libera depois
   Docker: não instala (para projetos em containers nesta máquina, --com-docker)
 
 Seguir com a instalação? [s/N] s
 
 [1m== 2. Pacotes base[0m
+  [32m✓[0m sistema atualizado (apt upgrade)
   [32m✓[0m ca-certificates, curl, gnupg, jq, python3, postgresql-common
 
 [1m== 3. PostgreSQL 18 e pgvector[0m
@@ -45,14 +45,14 @@ Seguir com a instalação? [s/N] s
 
 [1m== 4. Ajustes do PostgreSQL e pg_hba.conf[0m
   [32m✓[0m ajustes gravados em /etc/postgresql/18/main/conf.d/90-pgrunway.conf
-  [32m✓[0m pg_hba.conf: aplicações de 10.0.10.0/24 (SSL e senha)
+  [32m✓[0m pg_hba.conf: o postgres não entra de outra máquina
     cópia anterior em /etc/postgresql/18/main/pg_hba.conf.antes-pgrunway
   [32m✓[0m Postgres reiniciado: 4 ajuste(s) só valem reiniciando
 
 [1m== 5. Verificação[0m
   [32m✓[0m pgvector 0.8.6: extensão, índice HNSW e busca iterativa
   [32m✓[0m login com senha (scram-sha-256) pela rede desta máquina
-  [32m✓[0m SSL ligado e 1 rede(s) liberada(s) só com SSL e senha
+  [32m✓[0m SSL ligado: as aplicações de outras máquinas conectam com sslmode=require
   [32m✓[0m banco e login temporários apagados
 
 [1m== Pronto[0m
@@ -62,6 +62,9 @@ Próximo passo, o banco de cada aplicação (o \password manda só o hash da sen
   sudo -u postgres psql -c "CREATE ROLE app LOGIN" -c "\password app"
   sudo -u postgres psql -c "CREATE DATABASE app OWNER app"
   sudo -u postgres psql -d app -c "CREATE EXTENSION vector"
-[2mRegistro completo: /var/log/pgrunway/20261003-154044.log[0m
+Aplicação em outra máquina? Libere a rede dela com uma linha no fim do pg_hba.conf:
+  hostssl all all 10.0.10.0/24 scram-sha-256        (/etc/postgresql/18/main/pg_hba.conf)
+  sudo systemctl reload postgresql
+[2mRegistro completo: /var/log/pgrunway/20261003-161001.log[0m
 
-Script done on 2026-10-03 12:41:51-03:00 [COMMAND_EXIT_CODE="0"]
+Script done on 2026-10-03 13:11:13-03:00 [COMMAND_EXIT_CODE="0"]

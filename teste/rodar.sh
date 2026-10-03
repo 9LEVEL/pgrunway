@@ -6,8 +6,9 @@
 #   teste/rodar.sh 24.04            outra versão (no 24.04 o PostgreSQL 18 vem do PGDG)
 #   teste/rodar.sh 26.04 --manter   deixa o container de pé para olhar (docker exec -it pgr-teste-26.04 bash)
 #
-# Roteiro: (1) o que a conferência precisa recusar; (2) --checar; (3) instalação de um servidor só de banco, com
-# --liberar; (4) a mesma de novo, sem mudar nada; (5) o mesmo servidor ganhando --com-docker; (6) de novo, sem mudar.
+# Roteiro: (1) o que a conferência precisa recusar; (2) --checar; (3) instalação sem opção nenhuma; (4) o
+# administrador libera uma aplicação no pg_hba.conf e roda de novo: nada muda e a linha dele fica; (5) o mesmo
+# servidor ganha --com-docker; (6) de novo, sem mudar nada.
 # Precisa de Docker no host e de internet (apt, Docker Hub e o repositório do Alpine).
 
 set -Eeuo pipefail
@@ -20,6 +21,7 @@ NOME=pgr-teste-$UBUNTU
 REDE=pgr-teste-$UBUNTU
 SUBREDE=10.251.${UBUNTU%%.*}.0/24   # uma por versão (testes em paralelo), fora das redes do Docker de dentro
 HBA=/etc/postgresql/18/main/pg_hba.conf
+APLICACAO="hostssl all             all             10.0.10.0/24            scram-sha-256"
 SAIDA=$(mktemp -d)
 
 passo() { printf '\n\e[1m### %s\e[0m\n' "$*"; }
@@ -64,13 +66,26 @@ instalar() {
 	if grep -q 'erro inesperado' "$arq"; then falhou "erro inesperado na instalação ($*)"; fi
 }
 
-# sem_mudanca ARQUIVO: a segunda execução não pode mexer nos ajustes nem no pg_hba.conf
+# sem_mudanca ARQUIVO: rodar de novo não pode mexer nos ajustes, no pg_hba.conf nem no sistema
 sem_mudanca() {
 	if ! grep -q 'ajustes sem mudança' "$SAIDA/$1" || ! grep -q 'pg_hba.conf sem mudança' "$SAIDA/$1"; then
-		falhou "a segunda execução mudou os ajustes ou o pg_hba.conf"
+		falhou "a execução de novo mudou os ajustes ou o pg_hba.conf"
 	fi
-	if [[ $(docker exec "$NOME" grep -c '>>> pgrunway' "$HBA") != 1 ]]; then falhou "o bloco do pg_hba.conf foi duplicado"; fi
-	echo "ok: sem mudança e um só bloco no pg_hba.conf"
+	if grep -q 'sistema atualizado' "$SAIDA/$1"; then falhou "rodando de novo, não deveria atualizar o sistema"; fi
+	echo "ok: sem mudança e sem atualizar o sistema"
+}
+
+# aplicacao_depois_do_bloco: a linha do administrador continua uma só, depois do bloco do pgrunway
+aplicacao_depois_do_bloco() {
+	local fim linha
+	fim=$(docker exec "$NOME" grep -n '^# <<< pgrunway' "$HBA" | cut -d: -f1)
+	linha=$(docker exec "$NOME" grep -n -F -x "$APLICACAO" "$HBA" | cut -d: -f1)
+	if [[ -z $linha || $(wc -l <<<"$linha") != 1 || $linha -le $fim ]]; then
+		docker exec "$NOME" tail -n 20 "$HBA"
+		falhou "a linha da aplicação devia continuar uma só, depois do bloco do pgrunway"
+	fi
+	if [[ $(docker exec "$NOME" grep -c '^# >>> pgrunway' "$HBA") != 1 ]]; then falhou "o bloco do pgrunway foi duplicado"; fi
+	echo "ok: a linha da aplicação continua depois do bloco, que é um só"
 }
 
 passo "servidor de teste: Ubuntu $UBUNTU com systemd, sem as listas do apt, como um recém-instalado"
@@ -81,7 +96,6 @@ docker network create --subnet "$SUBREDE" "$REDE" >/dev/null
 passo "1. o que a conferência precisa recusar (container na rede padrão do Docker, 172.17.0.0/16)"
 subir "$NOME-conflito" bridge "$UBUNTU"
 recusa redes.txt 'cruza com a do Docker (172.17.0.0/16)' --com-docker --usuario teste
-recusa mundo.txt 'a internet inteira não' --liberar 0.0.0.0/0
 recusa sem-docker.txt 'só com --com-docker' --usuario teste
 if ! docker exec "$NOME-conflito" /pgrunway/install.sh --checar --com-docker --usuario teste \
 	--docker-bip 10.200.0.1/16 --docker-pool 10.201.0.0/16 >"$SAIDA/outras-redes.txt" 2>&1; then
@@ -93,31 +107,39 @@ derrubar "$NOME-conflito"
 
 passo "2. --checar"
 subir "$NOME" "$REDE" "$UBUNTU"
-docker exec "$NOME" /pgrunway/install.sh --checar --liberar "$SUBREDE"
+docker exec "$NOME" /pgrunway/install.sh --checar | tee "$SAIDA/checar.txt"
+if ! grep -q 'Primeira instalação: antes de tudo, atualiza o sistema' "$SAIDA/checar.txt"; then
+	falhou "o plano da primeira instalação devia atualizar o sistema"
+fi
 
-passo "3. servidor só de banco, com as aplicações de $SUBREDE liberadas"
-instalar so-banco.txt --liberar "$SUBREDE"
+passo "3. instalação sem opção nenhuma"
+instalar so-banco.txt
+if ! grep -q 'sistema atualizado' "$SAIDA/so-banco.txt"; then falhou "a primeira instalação devia atualizar o sistema"; fi
 if docker exec "$NOME" sh -c 'command -v docker' >/dev/null; then falhou "sem --com-docker, o Docker não deveria estar instalado"; fi
-if ! docker exec "$NOME" grep -q "^hostssl all             all             $SUBREDE" "$HBA"; then
-	falhou "a rede liberada não está no pg_hba.conf"
+if ! docker exec "$NOME" grep -q '^host    all             postgres        0.0.0.0/0               reject' "$HBA"; then
+	falhou "falta a linha que recusa o postgres de outra máquina"
 fi
 if [[ $(docker exec "$NOME" runuser -u postgres -- psql -XAtc "show listen_addresses") != '*' ]]; then
 	falhou "listen_addresses deveria ser *"
 fi
-echo "ok: sem Docker, $SUBREDE liberada só com SSL e senha, Postgres escutando na rede"
+echo "ok: sistema atualizado, sem Docker, postgres recusado de fora, Postgres escutando na rede"
 
-passo "4. de novo: nada pode mudar"
-instalar so-banco-2.txt --liberar "$SUBREDE"
+passo "4. o administrador libera uma aplicação depois do bloco e roda de novo"
+docker exec "$NOME" sh -c "printf '%s\n' '$APLICACAO' >>$HBA"
+instalar so-banco-2.txt
 sem_mudanca so-banco-2.txt
+aplicacao_depois_do_bloco
 
 passo "5. o mesmo servidor ganha --com-docker"
-instalar com-docker.txt --liberar "$SUBREDE" --com-docker --usuario teste
+instalar com-docker.txt --com-docker --usuario teste
 if ! grep -q 'de um container na rede do Compose' "$SAIDA/com-docker.txt"; then
 	falhou "faltou a verificação de dentro dos containers"
 fi
+aplicacao_depois_do_bloco
 
 passo "6. de novo: nada pode mudar"
-instalar com-docker-2.txt --liberar "$SUBREDE" --com-docker --usuario teste
+instalar com-docker-2.txt --com-docker --usuario teste
 sem_mudanca com-docker-2.txt
+aplicacao_depois_do_bloco
 
 passo "Tudo certo no Ubuntu $UBUNTU"

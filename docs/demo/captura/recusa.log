@@ -1,12 +1,12 @@
-Script started on 2026-10-03 12:40:36-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo-recusa ./install.sh " <not executed on terminal>]
-[1mpgrunway 0.3.0[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
+Script started on 2026-10-03 13:09:54-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo-recusa ./install.sh " <not executed on terminal>]
+[1mpgrunway 0.4.0[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
 nova, física ou virtual, conferida antes e testada no fim.
 
   1. Confere a máquina: sistema, memória, disco e o que já está instalado
-  2. PostgreSQL 18 e pgvector, com a versão do pgvector travada (um apt upgrade não troca)
-  3. Ajusta o Postgres ao tamanho da máquina e o pg_hba.conf: só entra quem você liberar,
-     com senha, e o superusuário postgres nunca pela rede
-  4. Teste final com um banco e um login temporários, apagados no fim
+  2. Na primeira vez, atualiza o sistema (apt upgrade)
+  3. PostgreSQL 18 e pgvector, com a versão do pgvector travada (um apt upgrade não troca)
+  4. Ajusta o Postgres ao tamanho da máquina; o superusuário postgres nunca entra de fora
+  5. Teste final com um banco e um login temporários, apagados no fim
 
 [2mNada é apagado nem desinstalado. Rodar de novo confere e mantém o que já está feito.[0m
 
@@ -15,7 +15,7 @@ nova, física ou virtual, conferida antes e testada no fim.
   [32m✓[0m arquitetura: amd64
   [32m✓[0m systemd ativo
   [32m✓[0m memória: 61 GB, 16 núcleo(s)
-  [32m✓[0m disco: 56 GB livres em /
+  [32m✓[0m disco: 52 GB livres em /
   disco do sistema: rotativo ou não informado (SSD numa máquina virtual: --disco ssd)
   [32m✓[0m repositório do PostgreSQL (PGDG) tem o noble
   [31m✗[0m já há PostgreSQL 16 aqui: o 18 ficaria noutra porta (use --pg 16 ou um servidor novo)
@@ -23,4 +23,4 @@ nova, física ou virtual, conferida antes e testada no fim.
 [31m[1mNão dá para seguir:[0m
   [31m✗[0m já há PostgreSQL 16 aqui: o 18 ficaria noutra porta (use --pg 16 ou um servidor novo)
 
-Script done on 2026-10-03 12:40:38-03:00 [COMMAND_EXIT_CODE="1"]
+Script done on 2026-10-03 13:09:55-03:00 [COMMAND_EXIT_CODE="1"]

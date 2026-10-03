@@ -1,5 +1,18 @@
 # Mudanças
 
+## 0.4.0 (03/10/2026)
+
+**Menos opções: o caso comum é `sudo ./install.sh`, sem nada.**
+
+- Sai `--liberar`: a rede de uma aplicação se libera com uma linha no fim do `pg_hba.conf`, como em qualquer
+  PostgreSQL; o resumo final e o README mostram a linha.
+- Sai `--atualizar-sistema`: a primeira instalação atualiza o sistema sozinha (e avisa se ele pedir reinício);
+  rodando de novo, não.
+- Sai `--cloudflared`.
+- O `postgres` não entra de nenhuma outra máquina (`reject` para 0.0.0.0/0 e ::/0), com ou sem Docker.
+- O bloco do pgrunway no `pg_hba.conf` é regravado no mesmo lugar: as linhas acrescentadas depois dele ficam.
+- O Postgres escuta em todas as interfaces; quem entra é o `pg_hba.conf` que decide.
+
 ## 0.3.0 (03/10/2026)
 
 **O nome passa a ser pgrunway** (antes pginstall.srv), e o foco, o servidor PostgreSQL.

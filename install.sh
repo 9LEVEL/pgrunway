@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # pgrunway: coloca um servidor PostgreSQL no ar. É a primeira instalação de uma máquina Ubuntu nova, física ou
-# virtual: PostgreSQL e pgvector (travado numa versão), ajustes proporcionais à máquina e um pg_hba.conf em que só
-# entra quem for liberado, com senha. Com --com-docker, instala também o Docker para projetos em containers na mesma
-# máquina. Termina conferindo tudo com um banco e um login temporários, apagados no fim.
+# virtual: sistema atualizado, PostgreSQL e pgvector (travado numa versão), ajustes proporcionais à máquina e um
+# pg_hba.conf em que o superusuário postgres nunca entra pela rede. Com --com-docker, instala também o Docker para
+# projetos em containers na mesma máquina. Termina conferindo tudo com um banco e um login temporários.
 #
 #   sudo ./install.sh              explica, confere a máquina, mostra o plano e pede confirmação
 #   sudo ./install.sh --checar     só confere a máquina e mostra o plano; não muda nada
@@ -13,7 +13,7 @@
 
 set -Eeuo pipefail
 
-VERSAO=0.3.0
+VERSAO=0.4.0
 NOME=pgrunway
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -21,47 +21,38 @@ NOME=pgrunway
 
 PG=18
 PGVECTOR=""                    # vazio: a mais nova do PGDG na primeira instalação; depois, a que estiver instalada
-LIBERAR=()                     # redes de onde as aplicações entram (--liberar), só com SSL e senha
 DISCO=auto                     # auto | ssd | hdd
 CHECAR=0
 SIM=0
-ATUALIZAR=0
-# Só com --com-docker: o Docker, as redes dele no pg_hba.conf, a pasta dos projetos e o Cloudflare Tunnel opcional
+ATUALIZAR=0                    # apt upgrade: só na primeira instalação (o PostgreSQL ainda não está aqui)
+# Só com --com-docker: o Docker, as redes dele no pg_hba.conf e a pasta dos projetos
 DOCKER=0
 PASTA=/docker
 USUARIO=${SUDO_USER:-}
 SO_COM_DOCKER=()               # opções de Docker usadas sem --com-docker
-CLOUDFLARED=0
 # Redes do Docker (daemon.json): a ponte padrão e de onde saem as redes do Compose. O pg_hba.conf libera as duas.
 DOCKER_BIP=${PGR_DOCKER_BIP:-172.17.0.1/16}
 DOCKER_POOL=${PGR_DOCKER_POOL:-172.18.0.0/16}
-CLOUDFLARED_IMAGEM=${PGR_CLOUDFLARED_IMAGEM:-cloudflare/cloudflared:2026.9.3}
 
 ajuda() {
 	cat <<EOF
 $NOME $VERSAO: coloca um servidor PostgreSQL + pgvector no ar, numa máquina Ubuntu nova.
 
-Uso: sudo ./install.sh [opções]
+Uso: sudo ./install.sh [opções]      (sem opção nenhuma, é o caso comum)
 
   --checar              só confere a máquina e mostra o plano; não muda nada
+  --com-docker          instala também o Docker, para projetos em containers nesta máquina
   -y, --sim             não pergunta antes de instalar (para automação)
-  --atualizar-sistema   roda um apt upgrade antes (recomendado num servidor recém-instalado)
-  --pg N                versão principal do PostgreSQL (padrão: $PG)
-  --pgvector X.Y.Z      versão exata do pgvector, travada (padrão: a mais nova, travada no que instalar)
-  --liberar CIDR        rede de onde as aplicações entram, só com SSL e senha; repita para mais de uma
-  --disco ssd|hdd       tipo do disco, quando a detecção erra (comum em máquina virtual)
   -h, --ajuda           esta ajuda
 
-Projetos em containers nesta mesma máquina:
-  --com-docker          instala o Docker oficial e libera as redes dele no pg_hba.conf
-  --pasta CAMINHO       pasta dos projetos (padrão: $PASTA)
-  --usuario NOME        quem entra no grupo docker e fica dono da pasta (padrão: quem chamou o sudo)
-  --docker-bip CIDR     rede da ponte padrão do Docker (padrão: $DOCKER_BIP)
-  --docker-pool CIDR    de onde saem as redes do Compose, em blocos /24 (padrão: $DOCKER_POOL)
-  --cloudflared         prepara <pasta>/cloudflare para um Cloudflare Tunnel (não sobe sem o token)
-
-Variáveis de ambiente (as opções valem por cima): PGR_DOCKER_BIP, PGR_DOCKER_POOL e
-PGR_CLOUDFLARED_IMAGEM (padrão: $CLOUDFLARED_IMAGEM).
+Raramente precisa:
+  --pg N                versão principal do PostgreSQL (padrão: $PG)
+  --pgvector X.Y.Z      versão exata do pgvector, travada (padrão: a mais nova, travada no que instalar)
+  --disco ssd|hdd       tipo do disco, quando a detecção erra (comum em máquina virtual)
+  --usuario NOME        com --com-docker: quem entra no grupo docker (padrão: quem chamou o sudo)
+  --pasta CAMINHO       com --com-docker: pasta dos projetos (padrão: $PASTA)
+  --docker-bip CIDR     com --com-docker: rede da ponte do Docker (padrão: $DOCKER_BIP)
+  --docker-pool CIDR    com --com-docker: redes do Compose, em blocos /24 (padrão: $DOCKER_POOL)
 EOF
 }
 
@@ -156,15 +147,12 @@ while (($#)); do
 	-y | --sim) SIM=1 ;;
 	--pg) PG=${2:-} && shift ;;
 	--pgvector) PGVECTOR=${2:-} && shift ;;
-	--liberar) LIBERAR+=("${2:-}") && shift ;;
 	--disco) DISCO=${2:-} && shift ;;
-	--atualizar-sistema) ATUALIZAR=1 ;;
 	--com-docker) DOCKER=1 ;;
 	--pasta) PASTA=${2:-} && SO_COM_DOCKER+=(--pasta) && shift ;;
 	--usuario) USUARIO=${2:-} && SO_COM_DOCKER+=(--usuario) && shift ;;
 	--docker-bip) DOCKER_BIP=${2:-} && SO_COM_DOCKER+=(--docker-bip) && shift ;;
 	--docker-pool) DOCKER_POOL=${2:-} && SO_COM_DOCKER+=(--docker-pool) && shift ;;
-	--cloudflared) CLOUDFLARED=1 && SO_COM_DOCKER+=(--cloudflared) ;;
 	-h | --ajuda | --help) ajuda && exit 0 ;;
 	*) die "opção desconhecida: $1 (veja --ajuda)" ;;
 	esac
@@ -184,9 +172,9 @@ if ((!DOCKER && ${#SO_COM_DOCKER[@]})); then die "${SO_COM_DOCKER[*]}: só com -
 explicar() {
 	local itens=(
 		"Confere a máquina: sistema, memória, disco e o que já está instalado"
+		"Na primeira vez, atualiza o sistema (apt upgrade)"
 		"PostgreSQL $PG e pgvector, com a versão do pgvector travada (um apt upgrade não troca)"
-		"Ajusta o Postgres ao tamanho da máquina e o pg_hba.conf: só entra quem você liberar,
-     com senha, e o superusuário postgres nunca pela rede"
+		"Ajusta o Postgres ao tamanho da máquina; o superusuário postgres nunca entra de fora"
 	) i
 	if ((DOCKER)); then itens+=("Docker Engine e Compose oficiais, com as redes deles liberadas e a pasta $PASTA"); fi
 	itens+=("Teste final com um banco e um login temporários, apagados no fim")
@@ -200,7 +188,7 @@ explicar() {
 # 1. Conferência da máquina
 
 COD='' ARQ='' RAM_MB=0 CPUS=0 DISCO_GB=0 SSD=0 PG_ORIGEM='' PGPORT=5432
-REDE_BIP='' REDE_POOL='' DAEMON_JSON_EXISTE=0 REDES_LIBERADAS=()
+REDE_BIP='' REDE_POOL='' DAEMON_JSON_EXISTE=0
 PASSO=0
 passo() { PASSO=$((PASSO + 1)) && titulo "$PASSO. $*"; }
 
@@ -285,26 +273,10 @@ checar_maquina() {
 	fi
 
 	checar_postgres
-	checar_liberar
 	if ((DOCKER)); then
 		checar_docker
 		checar_pasta
 	fi
-}
-
-# As redes de --liberar: CIDR válido (o endereço é ajustado para o início da rede) e nunca "o mundo inteiro"
-checar_liberar() {
-	local c r
-	for c in "${LIBERAR[@]}"; do
-		if ! r=$(rede_de "$c" 2>/dev/null); then
-			erro "--liberar $c: não é uma rede (ex.: 10.0.0.0/24 ou 10.0.0.15/32)"
-		elif [[ $r == 0.0.0.0/0 || $r == ::/0 ]]; then
-			erro "--liberar $c: a internet inteira não; diga de que redes as aplicações vêm"
-		else
-			REDES_LIBERADAS+=("$r")
-		fi
-	done
-	if ((${#REDES_LIBERADAS[@]})); then ok "redes liberadas para as aplicações: ${REDES_LIBERADAS[*]}"; fi
 }
 
 checar_postgres() {
@@ -318,8 +290,11 @@ checar_postgres() {
 	if instalado "postgresql-$PG"; then
 		ok "PostgreSQL $PG já instalado ($(versao_instalada "postgresql-$PG")): fica, e os ajustes são conferidos"
 		PGPORT=$(pg_conftool -s "$PG" main show port 2>/dev/null || echo 5432)
-	elif ss -Hltn 'sport = :5432' 2>/dev/null | grep -q .; then
-		erro "a porta 5432 já está em uso por outro programa: $(ss -Hltnp 'sport = :5432' | grep -o 'users:(("[^"]*' | head -n 1 | cut -d'"' -f2 || true)"
+	else
+		ATUALIZAR=1
+		if ss -Hltn 'sport = :5432' 2>/dev/null | grep -q .; then
+			erro "a porta 5432 já está em uso por outro programa: $(ss -Hltnp 'sport = :5432' | grep -o 'users:(("[^"]*' | head -n 1 | cut -d'"' -f2 || true)"
+		fi
 	fi
 
 	decidir_origem
@@ -443,9 +418,8 @@ decidir_origem() {
 
 AJUSTES=''
 calcular_ajustes() {
-	local pct_sb=25 pct_ec=75 listen=localhost
+	local pct_sb=25 pct_ec=75
 	if ((DOCKER)); then pct_sb=20 pct_ec=60; fi
-	if ((DOCKER || ${#REDES_LIBERADAS[@]})); then listen='*'; fi
 	local sb=$((RAM_MB * pct_sb / 100)) ec=$((RAM_MB * pct_ec / 100)) mwm=$((RAM_MB / 16)) wm=$((RAM_MB / 1000))
 	local nota_mem='' tipo_disco=rotativo
 	if ((DOCKER)); then nota_mem=", menos que num servidor só de banco: os containers dividem a máquina"; fi
@@ -463,9 +437,8 @@ calcular_ajustes() {
 # Rodar o $NOME de novo regrava este arquivo. Para mudar um valor só neste servidor, use ALTER SYSTEM: o
 # postgresql.auto.conf vale por cima daqui.
 
-# Sem rede liberada (--liberar) nem Docker, o Postgres só escuta nesta máquina. Com elas, escuta em todas as
-# interfaces, e quem entra e como é o pg_hba.conf que decide.
-listen_addresses = '$listen'
+# Escuta em todas as interfaces; quem entra e como é o pg_hba.conf que decide (de fábrica, só esta máquina).
+listen_addresses = '*'
 password_encryption = scram-sha-256
 
 # Memória: ${pct_sb}% para o cache do Postgres$nota_mem
@@ -503,24 +476,18 @@ mostrar_plano() {
 	case $PG_ORIGEM in
 	ubuntu) origem="do Ubuntu" ;;
 	pgdg) origem="do PGDG (o repositório oficial do PostgreSQL): o Ubuntu $COD não tem a $PG" ;;
-	*) origem="do Ubuntu, se ele tiver a $PG; senão do PGDG (decide depois do apt update)" ;;
+	*) origem="(do Ubuntu, ou do PGDG se o Ubuntu não tiver a $PG)" ;;
 	esac
-	if ((ATUALIZAR)); then info "Antes de tudo: apt upgrade do sistema"; fi
+	if ((ATUALIZAR)); then info "Primeira instalação: antes de tudo, atualiza o sistema (apt upgrade)"; fi
 	info "PostgreSQL $PG $origem"
 	info "pgvector do PGDG, versão ${PGVECTOR:-mais nova}, travada"
 	info "Ajustes do Postgres em /etc/postgresql/$PG/main/conf.d/90-pgrunway.conf:"
-	grep -E '^(listen_addresses|shared_buffers|effective_cache_size|work_mem|maintenance_work_mem|max_parallel_workers|random_page_cost)' <<<"$AJUSTES" |
+	grep -E '^(shared_buffers|effective_cache_size|work_mem|maintenance_work_mem|max_parallel_workers|random_page_cost)' <<<"$AJUSTES" |
 		sed "s/^/      ${D}/; s/$/${N}/"
-	if ((${#REDES_LIBERADAS[@]})); then
-		info "Aplicações entram de ${REDES_LIBERADAS[*]}, só com SSL e senha; o postgres nunca pela rede"
-	else
-		info "Pela rede, ninguém entra ainda: libere as aplicações com --liberar REDE (ex.: 10.0.0.0/24)"
-	fi
+	info "pg_hba.conf: o postgres nunca entra de outra máquina; as aplicações, você libera depois"
 	if ((DOCKER)); then
 		info "Docker Engine, Buildx e Compose oficiais; redes $REDE_BIP e $REDE_POOL liberadas, com senha"
-		local cf=''
-		if ((CLOUDFLARED)); then cf=", com $PASTA/cloudflare"; fi
-		info "Pasta $PASTA (grupo docker${USUARIO:+, dono $USUARIO})$cf"
+		info "Pasta $PASTA (grupo docker${USUARIO:+, dono $USUARIO})"
 	else
 		info "Docker: não instala (para projetos em containers nesta máquina, --com-docker)"
 	fi
@@ -534,7 +501,10 @@ instalar_base() {
 	apt_get update
 	if ((ATUALIZAR)); then
 		apt_get upgrade
-		ok "sistema atualizado"
+		ok "sistema atualizado (apt upgrade)"
+		if [[ -f /var/run/reboot-required ]]; then
+			aviso "o sistema pede reinício (kernel ou bibliotecas novas): reinicie quando puder"
+		fi
 	fi
 	apt_get install ca-certificates curl gnupg jq python3 postgresql-common
 	ok "ca-certificates, curl, gnupg, jq, python3, postgresql-common"
@@ -678,32 +648,34 @@ configurar_postgres() {
 		ok "ajustes sem mudança"
 	fi
 
-	# O bloco do pgrunway no fim do pg_hba.conf: regravado a cada execução, o resto do arquivo fica como está
-	local hba=$dir/pg_hba.conf tmp r o que=()
+	# O bloco do pgrunway no pg_hba.conf: entra no fim na primeira vez e depois é regravado no mesmo lugar, para
+	# que as linhas que vierem depois dele (as aplicações liberadas) continuem depois. O resto fica como está.
+	local hba=$dir/pg_hba.conf tmp bloco o="o postgres não entra de outra máquina"
 	tmp=$(mktemp)
-	awk '/^# >>> pgrunway/ {f = 1} !f {print} /^# <<< pgrunway/ {f = 0}' "$hba" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' >"$tmp"
-	{
-		printf '\n%s\n' "# >>> pgrunway: gerado; o $NOME regrava este bloco. Linhas suas, fora dele."
-		echo "# A primeira linha que casar decide: um \"reject\" de outro superusuário entra acima destas."
-		if ((${#REDES_LIBERADAS[@]})); then
-			echo "# Aplicações em outras máquinas (--liberar): só com SSL e senha; o superusuário postgres nunca."
-			for r in "${REDES_LIBERADAS[@]}"; do printf 'hostssl all             postgres        %-23s reject\n' "$r"; done
-			for r in "${REDES_LIBERADAS[@]}"; do printf 'hostssl all             all             %-23s scram-sha-256\n' "$r"; done
-			que+=("aplicações de ${REDES_LIBERADAS[*]} (SSL e senha)")
-		fi
+	bloco=$(
+		echo "# >>> pgrunway: gerado; o $NOME regrava este bloco. Linhas suas, fora dele."
+		echo "# O superusuário postgres nunca entra de outra máquina (aqui, pelo socket: sudo -u postgres psql)."
+		printf 'host    all             postgres        %-23s reject\n' 0.0.0.0/0 ::/0
 		if ((DOCKER)); then
 			echo "# Containers do Docker: a ponte padrão e as redes do Compose (/etc/docker/daemon.json), com senha."
-			for r in "$REDE_BIP" "$REDE_POOL"; do printf 'host    all             postgres        %-23s reject\n' "$r"; done
-			for r in "$REDE_BIP" "$REDE_POOL"; do printf 'host    all             all             %-23s scram-sha-256\n' "$r"; done
-			que+=("redes do Docker")
+			printf 'host    all             all             %-23s scram-sha-256\n' "$REDE_BIP" "$REDE_POOL"
 		fi
-		if ((!${#que[@]})); then
-			echo "# Nenhuma rede liberada: só conexões desta máquina. Para liberar aplicações: --liberar REDE."
-		fi
+		echo "# Aplicações de outras máquinas: uma linha depois deste bloco, com SSL e senha, por exemplo"
+		echo "#   hostssl all             all             10.0.10.0/24            scram-sha-256"
+		echo "# e depois: sudo systemctl reload postgresql"
 		echo "# <<< pgrunway"
-	} >>"$tmp"
-	o="só esta máquina"
-	if ((${#que[@]} == 1)); then o=${que[0]}; elif ((${#que[@]} == 2)); then o="${que[0]} e ${que[1]}"; fi
+	)
+	python3 - "$hba" "$bloco" >"$tmp" <<-'PY'
+		import re, sys
+		texto, bloco = open(sys.argv[1]).read(), sys.argv[2] + "\n"
+		achado = re.search(r"(?ms)^# >>> pgrunway.*?^# <<< pgrunway[^\n]*\n?", texto)
+		if achado:
+		    texto = texto[:achado.start()] + bloco + texto[achado.end():]
+		else:
+		    texto = texto.rstrip("\n") + "\n\n" + bloco
+		sys.stdout.write(texto)
+	PY
+	if ((DOCKER)); then o+="; redes do Docker com senha"; fi
 	if cmp -s "$tmp" "$hba"; then
 		ok "pg_hba.conf sem mudança: $o"
 	else
@@ -758,29 +730,6 @@ preparar_pasta() {
 	if [[ ! -e $leia ]] || head -n 1 "$leia" | grep -q "gerado pelo $NOME"; then
 		gravar_se_mudou "$leia" 664 "$dono:docker" "$(servidor_md)" || true
 		ok "$leia: o que está instalado e como criar o banco de um projeto"
-	fi
-
-	if ((CLOUDFLARED)); then
-		local cf=$PASTA/cloudflare
-		install -d -m 2770 -o "$dono" -g docker "$cf"
-		[[ -e $cf/compose.yaml ]] || gravar_se_mudou "$cf/compose.yaml" 664 "$dono:docker" "# Cloudflare Tunnel: publica serviços deste servidor na internet com HTTPS, sem abrir porta no firewall.
-# O token do túnel (painel Zero Trust → Networks → Tunnels) vai no .env desta pasta. Subir: docker compose up -d
-name: cloudflare
-
-services:
-  cloudflared:
-    image: $CLOUDFLARED_IMAGEM   # versão fixa; para atualizar, troque aqui e rode pull + up -d
-    container_name: cloudflared
-    restart: unless-stopped
-    # Rede do host: o túnel chega a cada serviço pela porta dele em localhost, e as portas dos projetos podem
-    # ficar presas em 127.0.0.1, fora da rede local.
-    network_mode: host
-    command: tunnel --no-autoupdate --metrics 127.0.0.1:20241 run
-    environment:
-      TUNNEL_TOKEN: \${TUNNEL_TOKEN:?coloque o token do túnel no .env desta pasta}" || true
-		[[ -e $cf/.env ]] || gravar_se_mudou "$cf/.env" 600 "$dono:docker" "# Token do Cloudflare Tunnel. Segredo: este arquivo fica com permissão 600 e fora de qualquer git.
-TUNNEL_TOKEN=" || true
-		ok "$cf: compose.yaml e .env (600) com TUNNEL_TOKEN vazio; o túnel sobe quando o token estiver lá"
 	fi
 }
 
@@ -859,15 +808,10 @@ verificar() {
 		erro "o login com senha não entrou pela rede desta máquina (127.0.0.1): veja o registro"
 	fi
 
-	if ((${#REDES_LIBERADAS[@]})); then
-		local ssl regras
-		ssl=$(pgsql -c "show ssl")
-		regras=$(pgsql -c "select count(*) from pg_hba_file_rules where type = 'hostssl' and auth_method = 'scram-sha-256'")
-		if [[ $ssl == on && $regras -ge ${#REDES_LIBERADAS[@]} ]]; then
-			ok "SSL ligado e ${#REDES_LIBERADAS[@]} rede(s) liberada(s) só com SSL e senha"
-		else
-			erro "as redes liberadas pedem SSL, e o SSL do Postgres está $ssl: confira ssl e o certificado"
-		fi
+	if [[ $(pgsql -c "show ssl") == on ]]; then
+		ok "SSL ligado: as aplicações de outras máquinas conectam com sslmode=require"
+	else
+		aviso "SSL desligado: ligue antes de liberar aplicações de outras máquinas (ssl = on)"
 	fi
 	if ((DOCKER)); then verificar_containers "$senha"; fi
 	limpar_teste
@@ -979,6 +923,9 @@ main() {
 		  sudo -u postgres psql -c "CREATE ROLE app LOGIN" -c "\\password app"
 		  sudo -u postgres psql -c "CREATE DATABASE app OWNER app"
 		  sudo -u postgres psql -d app -c "CREATE EXTENSION vector"
+		Aplicação em outra máquina? Libere a rede dela com uma linha no fim do pg_hba.conf:
+		  hostssl all all 10.0.10.0/24 scram-sha-256        (/etc/postgresql/$PG/main/pg_hba.conf)
+		  sudo systemctl reload postgresql
 	EOF
 	if ((DOCKER)) && [[ -n $USUARIO ]]; then printf '%s\n' "O grupo docker vale para $USUARIO no próximo login; resumo em $PASTA/SERVIDOR.md."; fi
 	printf '%s\n' "${D}Registro completo: $LOG${N}"

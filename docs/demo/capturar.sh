@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Grava a saída real do install.sh, com o tempo de cada linha, para as imagens do README (docs/demo/gravar.sh as
 # reproduz no VHS). Roda em Ubuntus descartáveis (teste/comum.sh), como o usuário "deploy" via sudo:
-#   docs/demo/captura/instalacao.*   26.04: servidor só de banco, aplicações de 10.0.10.0/24, respondendo "s"
+#   docs/demo/captura/instalacao.*   26.04: sudo ./install.sh, sem opção nenhuma, respondendo "s"
 #   docs/demo/captura/recusa.*       24.04 com o PostgreSQL 16 do Ubuntu já instalado: o instalador para e explica
 # Precisa de Docker e de internet; apaga os containers no fim.
 
@@ -72,4 +72,4 @@ gravar recusa "$NOME-recusa" ''
 
 subir "$NOME" "$REDE" 26.04
 docker exec "$NOME" useradd -m deploy
-gravar instalacao "$NOME" s --liberar 10.0.10.0/24
+gravar instalacao "$NOME" s

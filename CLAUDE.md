@@ -1,8 +1,8 @@
 # Instruções para agentes
 
-`pgrunway` (antes pginstall.srv) coloca um servidor PostgreSQL + pgvector no ar numa máquina Ubuntu nova: ajustes
-proporcionais, `pg_hba.conf` em que só entra quem for liberado (`--liberar`, SSL e senha) e, com `--com-docker`, o
-Docker oficial para projetos em containers na mesma máquina. Um script só, `install.sh`, em bash.
+`pgrunway` (antes pginstall.srv) coloca um servidor PostgreSQL + pgvector no ar numa máquina Ubuntu nova: sistema
+atualizado, ajustes proporcionais, `pg_hba.conf` em que o `postgres` nunca entra de outra máquina e, com
+`--com-docker`, o Docker oficial para projetos em containers na mesma máquina. Um script só, `install.sh`, em bash.
 
 **Idioma:** português do Brasil em tudo: mensagens do script, documentos e commits.
 
@@ -11,6 +11,7 @@ Docker oficial para projetos em containers na mesma máquina. Um script só, `in
 | Regra | Na prática |
 |---|---|
 | **Repositório público** | Nada de dados pessoais, nomes de clientes ou empresas, IPs e domínios internos, nomes de servidores reais, tokens ou senhas. Exemplos usam valores genéricos (`app`, `deploy`, `/docker`, `10.200.0.0/16`) |
+| **Poucos parâmetros** | O caso comum é `sudo ./install.sh` sem nada (pedido do mantenedor). Opção nova só se não houver padrão bom; o que dá para decidir sozinho (ex.: atualizar o sistema só na primeira vez), decide |
 | **Nada é apagado nem desinstalado** | Conflito para a instalação e explica; quem remove é o sysadmin |
 | **Rodar de novo não estraga** | Cada etapa confere o estado e só grava o que mudou (`gravar_se_mudou`); o bloco do `pg_hba.conf` é regravado entre os marcadores |
 | **Senha nunca em claro num comando** | Nem em argumento nem no texto de um SQL: use o verificador SCRAM (`scram`) ou o `\password` |
