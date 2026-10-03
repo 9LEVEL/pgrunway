@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pginstall.srv: prepara um servidor Ubuntu para receber projetos em containers com o PostgreSQL no próprio host.
+# pginstall.srv: prepara um servidor Ubuntu para rodar projetos em containers Docker, com o PostgreSQL no host.
 # Instala o PostgreSQL e o pgvector (travado numa versão), o Docker Engine oficial, ajusta o Postgres ao tamanho da
 # máquina, libera as redes do Docker no pg_hba.conf e cria a pasta dos projetos. Termina conferindo tudo com um
 # banco e um login temporários, apagados no fim.
@@ -13,7 +13,7 @@
 
 set -Eeuo pipefail
 
-VERSAO=0.1.0
+VERSAO=0.2.0
 NOME=pginstall.srv
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -47,13 +47,13 @@ Uso: sudo ./install.sh [opções]
   --usuario NOME        usuário que entra no grupo docker e fica dono da pasta (padrão: quem chamou o sudo)
   --disco ssd|hdd       tipo do disco, quando a detecção erra (comum em máquina virtual)
   --atualizar-sistema   roda um apt upgrade antes (recomendado num servidor recém-instalado)
+  --docker-bip CIDR     rede da ponte padrão do Docker (padrão: $DOCKER_BIP)
+  --docker-pool CIDR    de onde saem as redes do Compose, em blocos /24 (padrão: $DOCKER_POOL)
   --cloudflared         prepara <pasta>/cloudflare para um Cloudflare Tunnel (não sobe sem o token)
   -h, --ajuda           esta ajuda
 
-Variáveis de ambiente:
-  PGI_DOCKER_BIP=$DOCKER_BIP       rede da ponte padrão do Docker
-  PGI_DOCKER_POOL=$DOCKER_POOL     de onde saem as redes do Compose (blocos /24)
-  PGI_CLOUDFLARED_IMAGEM=$CLOUDFLARED_IMAGEM
+Variáveis de ambiente (as opções valem por cima): PGI_DOCKER_BIP, PGI_DOCKER_POOL e
+PGI_CLOUDFLARED_IMAGEM (padrão: $CLOUDFLARED_IMAGEM).
 EOF
 }
 
@@ -151,6 +151,8 @@ while (($#)); do
 	--pasta) PASTA=${2:-} && shift ;;
 	--usuario) USUARIO=${2:-} && shift ;;
 	--disco) DISCO=${2:-} && shift ;;
+	--docker-bip) DOCKER_BIP=${2:-} && shift ;;
+	--docker-pool) DOCKER_POOL=${2:-} && shift ;;
 	--atualizar-sistema) ATUALIZAR=1 ;;
 	--cloudflared) CLOUDFLARED=1 ;;
 	-h | --ajuda | --help) ajuda && exit 0 ;;
@@ -170,7 +172,8 @@ PASTA=${PASTA%/}
 
 explicar() {
 	cat <<EOF
-${B}$NOME $VERSAO${N}: prepara este servidor para projetos em containers, com o PostgreSQL no próprio host.
+${B}$NOME $VERSAO${N} prepara este servidor para rodar projetos em ${B}containers Docker${N}, com o
+PostgreSQL no próprio host (fora dos containers). O Docker faz parte da instalação.
 
   1. Confere a máquina: sistema, memória, disco, redes e o que já está instalado
   2. PostgreSQL $PG e pgvector, com a versão do pgvector travada (um apt upgrade não troca)
@@ -363,11 +366,12 @@ print(bip, pools[0]["base"] if pools else "")' 2>/dev/null) && [[ $lidas != " " 
 		for rede, dev in sorted(achadas, key=str):
 		    for d in docker:
 		        if rede.overlaps(d):
-		            print(f"{rede} ({dev}) cruza com {d}")
+		            print(f"{rede} ({dev}) cruza com a do Docker ({d})")
 	EOF
 	) || true
 	if [[ -n $cruzam ]]; then
-		while IFS= read -r l; do erro "rede da máquina $l: escolha outras com PGI_DOCKER_BIP e PGI_DOCKER_POOL"; done <<<"$cruzam"
+		while IFS= read -r l; do erro "a rede da máquina $l"; done <<<"$cruzam"
+		info "  escolha outras para o Docker, ex.: --docker-bip 10.200.0.1/16 --docker-pool 10.201.0.0/16"
 	else
 		ok "redes do Docker livres: $REDE_BIP (ponte) e $REDE_POOL (Compose)"
 	fi
@@ -459,15 +463,16 @@ mostrar_plano() {
 	local origem
 	case $PG_ORIGEM in
 	ubuntu) origem="do Ubuntu" ;;
-	pgdg) origem="do repositório oficial do PostgreSQL (PGDG): o Ubuntu $COD não tem a $PG" ;;
-	*) origem="do Ubuntu, se ele tiver a $PG; senão do PGDG (decidido depois do apt update)" ;;
+	pgdg) origem="do PGDG (o repositório oficial do PostgreSQL): o Ubuntu $COD não tem a $PG" ;;
+	*) origem="do Ubuntu, se ele tiver a $PG; senão do PGDG (decide depois do apt update)" ;;
 	esac
-	info "PostgreSQL $PG $origem; pgvector do PGDG, versão ${PGVECTOR:-mais nova}, travada"
-	info "Docker Engine, Buildx e Compose do repositório oficial; redes $REDE_BIP e $REDE_POOL"
+	info "PostgreSQL $PG $origem"
+	info "pgvector do PGDG, versão ${PGVECTOR:-mais nova}, travada"
+	info "Docker Engine, Buildx e Compose oficiais; redes $REDE_BIP e $REDE_POOL"
 	info "Ajustes do Postgres em /etc/postgresql/$PG/main/conf.d/90-pginstall.conf:"
 	grep -E '^(shared_buffers|effective_cache_size|work_mem|maintenance_work_mem|max_parallel_workers|random_page_cost)' <<<"$AJUSTES" |
 		sed "s/^/      ${D}/; s/$/${N}/"
-	info "pg_hba.conf: postgres recusado nas redes do Docker; os outros logins, com senha (scram-sha-256)"
+	info "pg_hba.conf: postgres recusado nas redes do Docker; os outros logins, com senha"
 	info "Pasta $PASTA (grupo docker${USUARIO:+, dono $USUARIO})$( ((CLOUDFLARED)) && echo ", com $PASTA/cloudflare")"
 	if ((ATUALIZAR)); then info "Antes de tudo: apt upgrade do sistema"; fi
 }
@@ -588,7 +593,7 @@ Signed-By: /etc/apt/keyrings/docker.asc" || true
   \"log-opts\": { \"max-size\": \"20m\", \"max-file\": \"5\" },
   \"builder\": { \"gc\": { \"enabled\": true, \"defaultMaxUsedSpace\": \"30GB\", \"defaultMinFreeSpace\": \"15GB\", \"defaultReservedSpace\": \"5GB\" } }
 }" || true
-		ok "/etc/docker/daemon.json: redes $DOCKER_BIP e $DOCKER_POOL, logs com rotação, limpeza do cache de build"
+		ok "daemon.json: redes $DOCKER_BIP e $DOCKER_POOL, rotação de logs, limpeza do cache de build"
 	fi
 
 	if instalado docker-ce; then
@@ -668,9 +673,10 @@ configurar_postgres() {
 		conexoes=$(pgsql -c "select count(*) from pg_stat_activity where backend_type = 'client backend' and pid <> pg_backend_pid()")
 		if ((conexoes == 0)) || { ((!SIM)) && [[ -t 0 ]] && perguntar "O Postgres precisa reiniciar ($pendentes) e há $conexoes conexão(ões) abertas. Reiniciar agora?"; }; then
 			rodar systemctl restart "postgresql@$PG-main"
-			ok "Postgres reiniciado para valer: $pendentes"
+			registrar "  reiniciado para valer: $pendentes"
+			ok "Postgres reiniciado: $(tr -cd , <<<"$pendentes" | wc -c | awk '{print $1 + 1}') ajuste(s) só valem reiniciando"
 		else
-			aviso "falta reiniciar o Postgres para valer: $pendentes (systemctl restart postgresql@$PG-main)"
+			aviso "falta reiniciar o Postgres (systemctl restart postgresql@$PG-main) para valer: $pendentes"
 		fi
 	fi
 }
@@ -869,7 +875,7 @@ main() {
 	verificar
 
 	titulo "Pronto"
-	info "PostgreSQL $(versao_instalada "postgresql-$PG") · pgvector $(versao_instalada "postgresql-$PG-pgvector" | sed 's/-.*//') · $(docker --version | sed 's/,.*//') · $(docker compose version --short 2>/dev/null | sed 's/^/Compose /')"
+	info "PostgreSQL $(versao_instalada "postgresql-$PG" | sed 's/-.*//') · pgvector $(versao_instalada "postgresql-$PG-pgvector" | sed 's/-.*//') · Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null) · Compose $(docker compose version --short 2>/dev/null)"
 	if ((${#AVISOS[@]})); then
 		printf '\n%s\n' "${Y}Avisos:${N}"
 		printf '  %s %s\n' "${Y}!${N}" "${AVISOS[@]}"
@@ -880,7 +886,8 @@ main() {
 		printf '%s\n' "${D}Registro completo: $LOG${N}"
 		exit 1
 	fi
-	printf '\n%s\n' "Próximos passos: $PASTA/SERVIDOR.md (banco de um projeto).${USUARIO:+ O grupo docker vale para $USUARIO no próximo login.}"
+	printf '\n%s\n' "Próximo passo: o banco de cada projeto, em $PASTA/SERVIDOR.md."
+	if [[ -n $USUARIO ]]; then printf '%s\n' "O grupo docker vale para $USUARIO no próximo login."; fi
 	printf '%s\n' "${D}Registro completo: $LOG${N}"
 }
 

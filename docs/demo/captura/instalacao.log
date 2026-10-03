@@ -1,0 +1,77 @@
+Script started on 2026-10-03 08:33:19-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pginstall pgi-demo ./install.sh" <not executed on terminal>]
+[1mpginstall.srv 0.2.0[0m prepara este servidor para rodar projetos em [1mcontainers Docker[0m, com o
+PostgreSQL no próprio host (fora dos containers). O Docker faz parte da instalação.
+
+  1. Confere a máquina: sistema, memória, disco, redes e o que já está instalado
+  2. PostgreSQL 18 e pgvector, com a versão do pgvector travada (um apt upgrade não troca)
+  3. Docker Engine, Buildx e Compose, do repositório oficial do Docker
+  4. Ajusta o Postgres ao tamanho da máquina e libera no pg_hba.conf as redes do Docker
+     (o superusuário postgres nunca entra por elas; os outros logins, só com senha)
+  5. Pasta dos projetos (/docker), do grupo docker
+  6. Teste final com um banco e um login temporários, apagados no fim
+
+[2mNada é apagado nem desinstalado. Rodar de novo confere e mantém o que já está feito.[0m
+
+[1m== 1. Conferência da máquina[0m
+  [32m✓[0m sistema: Ubuntu 26.04.1 LTS (resolute)
+  [32m✓[0m arquitetura: amd64
+  [32m✓[0m systemd ativo
+  [32m✓[0m memória: 61 GB, 16 núcleo(s)
+  [32m✓[0m disco: 57 GB livres em /
+  disco do sistema: rotativo ou não informado (em máquina virtual sobre SSD, use --disco ssd)
+  [32m✓[0m repositório do PostgreSQL (PGDG) tem o resolute
+  [32m✓[0m repositório do Docker tem o resolute
+  [32m✓[0m redes do Docker livres: 172.17.0.0/16 (ponte) e 172.18.0.0/16 (Compose)
+  [32m✓[0m usuário dos projetos: deploy
+
+[1m== Plano[0m
+  PostgreSQL 18 do Ubuntu, se ele tiver a 18; senão do PGDG (decide depois do apt update)
+  pgvector do PGDG, versão mais nova, travada
+  Docker Engine, Buildx e Compose oficiais; redes 172.17.0.0/16 e 172.18.0.0/16
+  Ajustes do Postgres em /etc/postgresql/18/main/conf.d/90-pginstall.conf:
+      [2mshared_buffers = 12619MB[0m
+      [2meffective_cache_size = 37857MB[0m
+      [2mmaintenance_work_mem = 2048MB[0m
+      [2mwork_mem = 63MB[0m
+      [2mmax_parallel_workers = 16[0m
+      [2mmax_parallel_workers_per_gather = 4[0m
+  pg_hba.conf: postgres recusado nas redes do Docker; os outros logins, com senha
+  Pasta /docker (grupo docker, dono deploy)
+
+Seguir com a instalação? [s/N] s
+
+[1m== 2. Pacotes base[0m
+  [32m✓[0m ca-certificates, curl, gnupg, jq, python3, postgresql-common
+
+[1m== 3. PostgreSQL 18 e pgvector[0m
+  [32m✓[0m PostgreSQL 18 instalado: 18.6-0ubuntu0.26.04.1 (ubuntu)
+  [32m✓[0m pgvector 0.8.6 (0.8.6-1.pgdg26.04+2), travado
+
+[1m== 4. Docker[0m
+  [32m✓[0m daemon.json: redes 172.17.0.1/16 e 172.18.0.0/16, rotação de logs, limpeza do cache de build
+  [32m✓[0m Docker instalado
+  [32m✓[0m deploy no grupo docker (vale no próximo login)
+
+[1m== 5. Ajustes do PostgreSQL e pg_hba.conf[0m
+  [32m✓[0m ajustes gravados em /etc/postgresql/18/main/conf.d/90-pginstall.conf
+  [32m✓[0m pg_hba.conf: bloco das redes do Docker (cópia anterior em pg_hba.conf.antes-pginstall)
+  [32m✓[0m Postgres reiniciado: 4 ajuste(s) só valem reiniciando
+
+[1m== 6. Pasta dos projetos[0m
+  [32m✓[0m /docker (deploy:docker, 2775: o que nascer aqui fica do grupo docker)
+  [32m✓[0m /docker/SERVIDOR.md: o que está instalado e como criar o banco de um projeto
+
+[1m== 7. Verificação[0m
+  [32m✓[0m pgvector 0.8.6: extensão, índice HNSW e busca iterativa
+  [32m✓[0m de um container na ponte padrão (172.17.0.2): login com senha entra, postgres é recusado
+  [32m✓[0m de um container na rede do Compose (172.18.0.2): login com senha entra, postgres é recusado
+  [32m✓[0m banco, login e rede temporários apagados
+
+[1m== Pronto[0m
+  PostgreSQL 18.6 · pgvector 0.8.6 · Docker 29.8.2 · Compose 5.6.0
+
+Próximo passo: o banco de cada projeto, em /docker/SERVIDOR.md.
+O grupo docker vale para deploy no próximo login.
+[2mRegistro completo: /var/log/pginstall.srv/20261003-113322.log[0m
+
+Script done on 2026-10-03 08:35:09-03:00 [COMMAND_EXIT_CODE="0"]

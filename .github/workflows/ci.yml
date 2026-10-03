@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: shellcheck
+        run: >-
+          docker run --rm -v "$PWD:/m:ro" -w /m koalaman/shellcheck:stable -x -S style
+          install.sh teste/rodar.sh teste/comum.sh docs/demo/capturar.sh docs/demo/gravar.sh docs/demo/ambiente.sh
+
+  instalacao:
+    name: instalação no Ubuntu ${{ matrix.ubuntu }}
+    needs: shellcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["24.04", "26.04"]
+    steps:
+      - uses: actions/checkout@v5
+      # Um Ubuntu descartável com systemd num container privilegiado: recusa por redes cruzadas, --checar,
+      # instalação completa e uma segunda execução que não pode mudar nada.
+      - name: instalação completa num servidor descartável
+        run: teste/rodar.sh "${{ matrix.ubuntu }}"

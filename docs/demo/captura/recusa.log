@@ -1,0 +1,31 @@
+Script started on 2026-10-03 08:33:15-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pginstall pgi-demo-recusa ./install.sh" <not executed on terminal>]
+[1mpginstall.srv 0.2.0[0m prepara este servidor para rodar projetos em [1mcontainers Docker[0m, com o
+PostgreSQL no próprio host (fora dos containers). O Docker faz parte da instalação.
+
+  1. Confere a máquina: sistema, memória, disco, redes e o que já está instalado
+  2. PostgreSQL 18 e pgvector, com a versão do pgvector travada (um apt upgrade não troca)
+  3. Docker Engine, Buildx e Compose, do repositório oficial do Docker
+  4. Ajusta o Postgres ao tamanho da máquina e libera no pg_hba.conf as redes do Docker
+     (o superusuário postgres nunca entra por elas; os outros logins, só com senha)
+  5. Pasta dos projetos (/docker), do grupo docker
+  6. Teste final com um banco e um login temporários, apagados no fim
+
+[2mNada é apagado nem desinstalado. Rodar de novo confere e mantém o que já está feito.[0m
+
+[1m== 1. Conferência da máquina[0m
+  [32m✓[0m sistema: Ubuntu 26.04.1 LTS (resolute)
+  [32m✓[0m arquitetura: amd64
+  [32m✓[0m systemd ativo
+  [32m✓[0m memória: 61 GB, 16 núcleo(s)
+  [32m✓[0m disco: 57 GB livres em /
+  disco do sistema: rotativo ou não informado (em máquina virtual sobre SSD, use --disco ssd)
+  [32m✓[0m repositório do PostgreSQL (PGDG) tem o resolute
+  [32m✓[0m repositório do Docker tem o resolute
+  [31m✗[0m a rede da máquina 172.17.0.0/16 (eth0) cruza com a do Docker (172.17.0.0/16)
+    escolha outras para o Docker, ex.: --docker-bip 10.200.0.1/16 --docker-pool 10.201.0.0/16
+  [32m✓[0m usuário dos projetos: deploy
+
+[31m[1mNão dá para seguir:[0m
+  [31m✗[0m a rede da máquina 172.17.0.0/16 (eth0) cruza com a do Docker (172.17.0.0/16)
+
+Script done on 2026-10-03 08:33:16-03:00 [COMMAND_EXIT_CODE="1"]
