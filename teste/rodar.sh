@@ -7,7 +7,8 @@
 #   teste/rodar.sh 26.04 --manter   deixa o container de pé para olhar (docker exec -it pgr-teste-26.04 bash)
 #
 # Roteiro: (1) o que a conferência precisa recusar; (2) --checar, como root e como quem veio do sudo; (3)
-# instalação sem opção nenhuma, pelo usuário "teste" via sudo: superusuário, .pgpass e pgtower; (4) o administrador
+# instalação sem opção nenhuma, pelo usuário "teste" via sudo: superusuário, .pgpass, pgtower (dele e do root) e o
+# guia do fim; (4) o administrador
 # libera uma aplicação no pg_hba.conf e roda de novo: nada muda, nem a senha, e a linha dele fica; (5) o mesmo
 # servidor ganha --com-docker, com o pghangar; (6) de novo, sem mudar nada.
 # O pghangar vem do release público; sem ele, de uma cópia baixada com o gh (credencial de quem roda o teste); sem
@@ -66,7 +67,7 @@ recusa() {
 instalar() {
 	local arq=$SAIDA/$1
 	shift
-	docker exec -e SUDO_USER=teste "${INSTALAR_ENV[@]}" "$NOME" /pgrunway/install.sh --sim --disco ssd "$@" | tee "$arq"
+	docker exec -e SUDO_USER=teste "${INSTALAR_ENV[@]}" "$NOME" /pgrunway/install.sh --sim "$@" | tee "$arq"
 	if grep -q 'erro inesperado' "$arq"; then falhou "erro inesperado na instalação ($*)"; fi
 }
 
@@ -143,7 +144,8 @@ if [[ $(docker exec "$NOME" runuser -u postgres -- psql -XAtc "show listen_addre
 fi
 echo "ok: sistema atualizado, sem Docker, postgres recusado de fora, Postgres escutando na rede"
 for msg in 'superusuário teste criado' 'superusuário teste entra com a senha' 'pelo socket, sem senha' \
-	'pgtower: este servidor cadastrado'; do
+	'pgtower: este servidor cadastrado para teste' 'pgtower: este servidor cadastrado para root' \
+	'Quem administra: você, teste' 'Este guia fica no /home/teste/pgrunway.txt'; do
 	if ! grep -q "$msg" "$SAIDA/so-banco.txt"; then falhou "faltou: $msg"; fi
 done
 if [[ $(docker exec "$NOME" stat -c '%U %a' /home/teste/.pgpass) != 'teste 600' ]]; then
@@ -152,13 +154,25 @@ fi
 if ! docker exec "$NOME" grep -q 'host_ram_mb' /home/teste/.config/pgtower/config.yml; then
 	falhou "o config do pgtower devia ter a memória da máquina"
 fi
+# O pgtower do root (depois de um sudo -i) entra como teste, com a senha lida do .pgpass dele: o mesmo que o pgx faz
+if ! docker exec "$NOME" grep -q 'passfile=/home/teste/.pgpass' /root/.config/pgtower/config.yml ||
+	[[ $(docker exec "$NOME" env PGPASSFILE=/home/teste/.pgpass psql -XAt -h localhost -U teste -d postgres \
+		-c 'select rolsuper from pg_roles where rolname = current_user') != t ]]; then
+	falhou "o pgtower do root devia entrar como teste, com a senha do /home/teste/.pgpass"
+fi
+if ! docker exec "$NOME" grep -q 'Quem administra: você, teste' /home/teste/pgrunway.txt; then
+	falhou "o guia devia ficar no /home/teste/pgrunway.txt"
+fi
 PGPASS_ANTES=$(docker exec "$NOME" sha256sum /home/teste/.pgpass)
-echo "ok: superusuário teste com a senha no .pgpass, pgtower instalado e apontado para cá"
+echo "ok: superusuário teste com a senha no .pgpass, pgtower dele e do root apontados para cá, guia no ~/pgrunway.txt"
 
 passo "4. o administrador libera uma aplicação depois do bloco e roda de novo"
 docker exec "$NOME" sh -c "printf '%s\n' '$APLICACAO' >>$HBA"
 instalar so-banco-2.txt
 sem_mudanca so-banco-2.txt
+if grep -q 'já tem config.yml: mantido' "$SAIDA/so-banco-2.txt"; then
+	falhou "o config.yml do pgtower gerado pelo pgrunway devia continuar com ele"
+fi
 aplicacao_depois_do_bloco
 if [[ $(docker exec "$NOME" sha256sum /home/teste/.pgpass) != "$PGPASS_ANTES" ]]; then falhou "rodar de novo trocou a senha"; fi
 if ! grep -q 'superusuário teste já existe: fica como está' "$SAIDA/so-banco-2.txt"; then falhou "o superusuário devia ficar"; fi

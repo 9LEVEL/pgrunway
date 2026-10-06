@@ -1,5 +1,5 @@
-Script started on 2026-10-03 14:26:07-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo ./install.sh " <not executed on terminal>]
-[1mpgrunway 0.6.0[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
+Script started on 2026-10-06 11:14:22-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo ./install.sh " <not executed on terminal>]
+[1mpgrunway 0.6.1[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
 nova, física ou virtual, conferida antes e testada no fim.
 
   1. Confere a máquina: sistema, memória, disco e o que já está instalado
@@ -16,8 +16,8 @@ nova, física ou virtual, conferida antes e testada no fim.
   [32m✓[0m arquitetura: amd64
   [32m✓[0m systemd ativo
   [32m✓[0m memória: 61 GB, 16 núcleo(s)
-  [32m✓[0m disco: 50 GB livres em /
-  disco do sistema: rotativo ou não informado (SSD numa máquina virtual: --disco ssd)
+  [32m✓[0m disco: 40 GB livres em /
+  disco do sistema: virtual (kvm), ajustado como SSD
   [32m✓[0m repositório do PostgreSQL (PGDG) tem o resolute
   [32m✓[0m quem administra: deploy (superusuário do Postgres, senha no /home/deploy/.pgpass)
 
@@ -32,6 +32,7 @@ nova, física ou virtual, conferida antes e testada no fim.
       [2mwork_mem = 63MB[0m
       [2mmax_parallel_workers = 16[0m
       [2mmax_parallel_workers_per_gather = 4[0m
+      [2mrandom_page_cost = 1.1[0m
   pg_hba.conf: o postgres nunca entra de outra máquina; as aplicações, você libera depois
   Superusuário deploy (senha no /home/deploy/.pgpass) e pgtower v0.13.1 apontado para cá
   Docker e pghangar: não instala (para containers e cópias nesta máquina, --com-docker)
@@ -44,7 +45,7 @@ Seguir com a instalação? [s/N] s
 
 [1m== 3. PostgreSQL 18 e pgvector[0m
   [32m✓[0m PostgreSQL 18 instalado: 18.6-0ubuntu0.26.04.1 (ubuntu)
-  [32m✓[0m pgvector 0.8.6 (0.8.6-1.pgdg26.04+2), travado
+  [32m✓[0m pgvector 0.8.7 (0.8.7-1.pgdg26.04+1), travado
 
 [1m== 4. Ajustes do PostgreSQL e pg_hba.conf[0m
   [32m✓[0m ajustes gravados em /etc/postgresql/18/main/conf.d/90-pgrunway.conf
@@ -56,27 +57,44 @@ Seguir com a instalação? [s/N] s
   [32m✓[0m superusuário deploy criado; a senha está no /home/deploy/.pgpass (só deploy lê)
   [32m✓[0m pgtower v0.13.1 instalado em /usr/local/bin (SHA256 conferido)
   [32m✓[0m pgtower de deploy apontado para este servidor (pgr-demo): é só digitar pgtower
+  [32m✓[0m e o do root também (depois de um sudo -i), entrando como deploy
 
 [1m== 6. Verificação[0m
-  [32m✓[0m pgvector 0.8.6: extensão, índice HNSW e busca iterativa
+  [32m✓[0m pgvector 0.8.7: extensão, índice HNSW e busca iterativa
   [32m✓[0m login com senha (scram-sha-256) pela rede desta máquina
   [32m✓[0m SSL ligado: as aplicações de outras máquinas conectam com sslmode=require
   [32m✓[0m superusuário deploy entra com a senha do /home/deploy/.pgpass
   [32m✓[0m e pelo socket, sem senha (psql -d postgres)
   [32m✓[0m pgtower: este servidor cadastrado para deploy
+  [32m✓[0m pgtower: este servidor cadastrado para root
   [32m✓[0m banco e login temporários apagados
 
 [1m== Pronto[0m
-  PostgreSQL 18.6 · pgvector 0.8.6 · pgtower v0.13.1
+  PostgreSQL 18.6 · pgvector 0.8.7 · pgtower v0.13.1
 
-Para administrar, o superusuário [1mdeploy[0m (senha no /home/deploy/.pgpass, só deploy lê):
-  pgtower                          abre este servidor
-  psql -d postgres                 o mesmo, no psql
-De outra máquina (o pgtower na sua estação), libere o IP dela no fim do pg_hba.conf:
-  hostssl all deploy IP-DA-ESTACAO/32 scram-sha-256
-  sudo systemctl reload postgresql
-  e na estação: postgres://deploy@10.251.99.3:5432/postgres?sslmode=require
-  [2m(a senha é a mesma do /home/deploy/.pgpass daqui)[0m
-[2mRegistro completo: /var/log/pgrunway/20261003-172609.log[0m
+[1m== Como usar[0m
+  Quem administra: você, deploy (no PostgreSQL, superusuário com o mesmo nome)
+  Senha: no /home/deploy/.pgpass (daqui não precisa; é para outras máquinas)
 
-Script done on 2026-10-03 14:27:26-03:00 [COMMAND_EXIT_CODE="0"]
+  [1mNeste servidor, no seu usuário ou depois de um sudo -i:[0m
+    pgtower                    painel de administração, já aberto neste servidor
+    psql -d postgres           linha de comando (no seu usuário)
+    sudo -u postgres psql      linha de comando (como root, depois de um sudo -i)
+
+  [1mDa sua estação (troque IP-DA-ESTACAO pelo IP dela):[0m
+    1. libere o IP dela no fim do /etc/postgresql/18/main/pg_hba.conf:
+         hostssl all deploy IP-DA-ESTACAO/32 scram-sha-256
+    2. recarregue: sudo systemctl reload postgresql
+    3. conecte com postgres://deploy@10.251.99.3:5432/postgres?sslmode=require
+       e a senha do .pgpass daqui
+
+  [1mO banco de uma aplicação, com um login dono dele (sem superusuário):[0m
+    sudo -u postgres psql -c "CREATE ROLE app LOGIN" -c "\password app"
+    sudo -u postgres psql -c "CREATE DATABASE app OWNER app"
+    se ela roda em outra máquina, a rede dela no fim do pg_hba.conf:
+      hostssl all app 10.0.10.0/24 scram-sha-256
+
+  [2mEste guia fica no /home/deploy/pgrunway.txt[0m
+  [2mRegistro completo: /var/log/pgrunway/20261006-141424.log[0m
+
+Script done on 2026-10-06 11:15:33-03:00 [COMMAND_EXIT_CODE="0"]

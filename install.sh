@@ -15,7 +15,7 @@
 
 set -Eeuo pipefail
 
-VERSAO=0.6.0
+VERSAO=0.6.1
 NOME=pgrunway
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -23,7 +23,6 @@ NOME=pgrunway
 
 PG=18
 PGVECTOR=""                    # vazio: a mais nova do PGDG na primeira instalação; depois, a que estiver instalada
-DISCO=auto                     # auto | ssd | hdd
 CHECAR=0
 SIM=0
 ATUALIZAR=0                    # apt upgrade: só na primeira instalação (o PostgreSQL ainda não está aqui)
@@ -61,7 +60,6 @@ Uso: sudo ./install.sh [opções]      (sem opção nenhuma, é o caso comum)
 Raramente precisa:
   --pg N                versão principal do PostgreSQL (padrão: $PG)
   --pgvector X.Y.Z      versão exata do pgvector, travada (padrão: a mais nova, travada no que instalar)
-  --disco ssd|hdd       tipo do disco, quando a detecção erra (comum em máquina virtual)
   --usuario NOME        quem administra: superusuário do Postgres e grupo docker (padrão: quem chamou o sudo)
   --pasta CAMINHO       com --com-docker: pasta dos projetos (padrão: $PASTA)
   --docker-bip CIDR     com --com-docker: rede da ponte do Docker (padrão: $DOCKER_BIP)
@@ -160,7 +158,6 @@ while (($#)); do
 	-y | --sim) SIM=1 ;;
 	--pg) PG=${2:-} && shift ;;
 	--pgvector) PGVECTOR=${2:-} && shift ;;
-	--disco) DISCO=${2:-} && shift ;;
 	--com-docker) DOCKER=1 ;;
 	--pasta) PASTA=${2:-} && SO_COM_DOCKER+=(--pasta) && shift ;;
 	--usuario) USUARIO=${2:-} && shift ;;
@@ -176,7 +173,6 @@ done
 [[ $PASTA == /?* && $PASTA != *[[:space:]]* ]] || die "--pasta precisa de um caminho absoluto, sem espaços, ex.: /docker"
 PASTA=${PASTA%/}
 [[ -z $USUARIO || $USUARIO =~ ^[a-z_][a-z0-9_-]*$ ]] || die "--usuario inválido: $USUARIO"
-[[ $DISCO =~ ^(auto|ssd|hdd)$ ]] || die "--disco aceita ssd ou hdd"
 if ((!DOCKER && ${#SO_COM_DOCKER[@]})); then die "${SO_COM_DOCKER[*]}: só com --com-docker"; fi
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -201,7 +197,7 @@ explicar() {
 # ---------------------------------------------------------------------------------------------------------------
 # 1. Conferência da máquina
 
-COD='' ARQ='' RAM_MB=0 CPUS=0 DISCO_GB=0 DISCO_TOTAL_GB=0 SSD=0 PG_ORIGEM='' PGPORT=5432
+COD='' ARQ='' RAM_MB=0 CPUS=0 DISCO_GB=0 DISCO_TOTAL_GB=0 SSD=0 DISCO_TIPO='' PG_ORIGEM='' PGPORT=5432
 REDE_BIP='' REDE_POOL='' DAEMON_JSON_EXISTE=0
 PASSO=0
 passo() { PASSO=$((PASSO + 1)) && titulo "$PASSO. $*"; }
@@ -242,14 +238,21 @@ checar_maquina() {
 	else
 		ok "disco: ${DISCO_GB} GB livres em /"
 	fi
-	local rota
+	# O tipo do disco decide os ajustes de leitura aleatória. Numa máquina virtual, o disco quase sempre se diz
+	# rotativo ("QEMU HARDDISK") e por baixo é SSD ou um storage com cache: vale o ajuste de SSD (o PGTune faz o
+	# mesmo para SAN). Numa máquina física, o kernel sabe; um valor errado se troca com ALTER SYSTEM.
+	local rota virt
 	rota=$(lsblk -nso ROTA "$(findmnt -no SOURCE /)" 2>/dev/null | tail -n 1 | tr -d ' ' || true)
-	case $DISCO in
-	ssd) SSD=1 ;;
-	hdd) SSD=0 ;;
-	*) [[ $rota == 0 ]] && SSD=1 || SSD=0 ;;
-	esac
-	if ((SSD)); then info "disco do sistema: SSD"; else info "disco do sistema: rotativo ou não informado (SSD numa máquina virtual: --disco ssd)"; fi
+	virt=$(systemd-detect-virt --vm 2>/dev/null || true)
+	if [[ $virt == none ]]; then virt=''; fi
+	if [[ $rota == 0 ]]; then
+		SSD=1 DISCO_TIPO=SSD
+	elif [[ -n $virt ]]; then
+		SSD=1 DISCO_TIPO="virtual ($virt), ajustado como SSD"
+	else
+		SSD=0 DISCO_TIPO=rotativo
+	fi
+	info "disco do sistema: $DISCO_TIPO"
 	if lsblk -nso TYPE "$(findmnt -no SOURCE /)" 2>/dev/null | grep -qx crypt && ! instalado clevis-luks; then
 		aviso "o disco do sistema é criptografado (LUKS) sem desbloqueio automático: a cada reinício alguém digita a senha no console"
 	fi
@@ -451,9 +454,8 @@ calcular_ajustes() {
 	local pct_sb=25 pct_ec=75
 	if ((DOCKER)); then pct_sb=20 pct_ec=60; fi
 	local sb=$((RAM_MB * pct_sb / 100)) ec=$((RAM_MB * pct_ec / 100)) mwm=$((RAM_MB / 16)) wm=$((RAM_MB / 1000))
-	local nota_mem='' tipo_disco=rotativo
+	local nota_mem=''
 	if ((DOCKER)); then nota_mem=", menos que num servidor só de banco: os containers dividem a máquina"; fi
-	if ((SSD)); then tipo_disco=SSD; fi
 	local par=$((CPUS / 2)) mwp=$((CPUS > 8 ? CPUS : 8)) wal=4GB
 	((sb < 128)) && sb=128
 	((mwm > 2048)) && mwm=2048
@@ -463,7 +465,7 @@ calcular_ajustes() {
 	((par < 1)) && par=1
 	((par > 4)) && par=4
 	((DISCO_TOTAL_GB < 50)) && wal=2GB
-	AJUSTES="# Gerado pelo $NOME $VERSAO em $(date +%Y-%m-%d) para ${RAM_MB} MB de memória, $CPUS núcleo(s) e disco $tipo_disco.
+	AJUSTES="# Gerado pelo $NOME $VERSAO para ${RAM_MB} MB de memória, $CPUS núcleo(s) e disco $DISCO_TIPO.
 # Rodar o $NOME de novo regrava este arquivo. Para mudar um valor só neste servidor, use ALTER SYSTEM: o
 # postgresql.auto.conf vale por cima daqui.
 
@@ -839,30 +841,46 @@ instalar_pgtower() {
 }
 
 # O pgtower de quem administra já abre este servidor: pelo socket, sem senha (ou, para o dba, por localhost com o
-# .pgpass), com a memória e os núcleos para o assistente de ajustes. Um config.yml que já existe não é tocado.
+# .pgpass), com a memória e os núcleos para o assistente de ajustes. O do root também, para quem administra depois de
+# um sudo -i: entra como o mesmo superusuário, com a senha lida do .pgpass dele (sem cópia). Um config.yml que não
+# é do pgrunway (um que o pgtower já regravou, por exemplo) fica como está.
 configurar_pgtower() {
-	local dir=$CASA/.config/pgtower nome host=/var/run/postgresql grupo
-	nome=$(hostname -s)
-	grupo=$(id -gn "$CONTA")
-	if [[ $ADMIN != "$CONTA" ]]; then host=localhost; fi
-	if [[ -e $dir/config.yml ]]; then
-		info "o pgtower de $CONTA já tem config.yml: mantido (este servidor entra pela tecla l)"
-		return 0
+	local conexao="host: /var/run/postgresql
+    port: $PGPORT
+    user: $ADMIN
+    database: postgres
+    sslmode: disable"
+	if [[ $ADMIN != "$CONTA" ]]; then conexao=${conexao/\/var\/run\/postgresql/localhost}; fi
+	if config_pgtower "$CONTA" "$CASA" "$conexao" "no pgtower, este servidor entra pela tecla l"; then
+		ok "pgtower de $CONTA apontado para este servidor ($(hostname -s)): é só digitar pgtower"
 	fi
-	runuser -u "$CONTA" -- mkdir -p -m 700 "$dir"
-	gravar_se_mudou "$dir/config.yml" 600 "$CONTA:$grupo" "# Gerado pelo $NOME: este servidor. Outros servidores: tecla S no pgtower.
+	if [[ $CONTA != root ]] && config_pgtower root /root \
+		"url: postgres://$ADMIN@localhost:$PGPORT/postgres?sslmode=disable&passfile=$CASA/.pgpass" \
+		"para o pgrunway gerar um que entra como $ADMIN: apague-o e rode de novo"; then
+		ok "e o do root também (depois de um sudo -i), entrando como $ADMIN"
+	fi
+}
+
+# config_pgtower CONTA CASA CONEXÃO DICA: grava o config.yml do pgtower de CONTA com este servidor. 1 = já havia um
+# que não é do pgrunway (fica como está; DICA diz o que fazer). O do pgrunway é regravado.
+config_pgtower() {
+	local conta=$1 dir=$2/.config/pgtower conexao=$3 dica=$4 nome grupo
+	nome=$(hostname -s)
+	grupo=$(id -gn "$conta")
+	if [[ -e $dir/config.yml ]] && ! head -n 1 "$dir/config.yml" | grep -q "^# Gerado pelo $NOME"; then
+		info "o pgtower de $conta já tem config.yml: mantido"
+		info "  $dica"
+		return 1
+	fi
+	runuser -u "$conta" -- mkdir -p -m 700 "$dir"
+	gravar_se_mudou "$dir/config.yml" 600 "$conta:$grupo" "# Gerado pelo $NOME: este servidor. Outros servidores: tecla S no pgtower.
 version: 2
 default: $nome
 connections:
   - name: $nome
-    host: $host
-    port: $PGPORT
-    user: $ADMIN
-    database: postgres
-    sslmode: disable
+    $conexao
     host_ram_mb: $RAM_MB
     host_cpus: $CPUS" || true
-	ok "pgtower de $CONTA apontado para este servidor ($nome): é só digitar pgtower"
 }
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -983,11 +1001,19 @@ verificar() {
 		fi
 	fi
 	if command -v pgtower >/dev/null; then
-		if runuser -u "$CONTA" -- env -u XDG_CONFIG_HOME HOME="$CASA" pgtower --list 2>>"$LOG" | grep -q -F "$(hostname -s)"; then
-			ok "pgtower: este servidor cadastrado para $CONTA"
-		else
-			aviso "o pgtower não listou este servidor: confira com pgtower --list"
-		fi
+		# A lista vai para uma variável antes do grep: num pipe, o grep -q sai no primeiro achado, o pgtower morre
+		# escrevendo o resto (Broken pipe) e o pipefail dava um aviso falso
+		local conta casa lista contas=("$CONTA")
+		if [[ $CONTA != root ]]; then contas+=(root); fi
+		for conta in "${contas[@]}"; do
+			casa=$(getent passwd "$conta" | cut -d: -f6)
+			lista=$(runuser -u "$conta" -- env -u XDG_CONFIG_HOME HOME="$casa" pgtower --list 2>>"$LOG" || true)
+			if grep -q -F "$(hostname -s)" <<<"$lista"; then
+				ok "pgtower: este servidor cadastrado para $conta"
+			else
+				aviso "o pgtower de $conta não tem este servidor: confira com pgtower --list"
+			fi
+		done
 	fi
 	if ((DOCKER)) && command -v pghangar >/dev/null; then
 		if pghangar versao >/dev/null 2>>"$LOG"; then
@@ -1041,25 +1067,56 @@ verificar_containers() {
 	if ((!tinha_imagem)); then docker image rm "$imagem" >>"$LOG" 2>&1 || true; fi
 }
 
-# O que quem administra precisa saber: o superusuário, como entrar daqui e como liberar a estação dele. O IP da
-# estação vem da sessão SSH em que o pgrunway rodou (who -m); sem SSH, fica o lugar para preencher.
-resumo_admin() {
-	local estacao ip_srv mascara=32 psql_aqui="psql -d postgres" pgtower_aqui="pgtower"
+# O guia do fim, para a tela, o registro e o ~/pgrunway.txt de quem administra: quem é, como entrar daqui (no
+# próprio usuário ou depois de um sudo -i) e da estação, e o banco de uma aplicação. O IP da estação vem da sessão SSH
+# em que o pgrunway rodou (who -m); sem SSH, fica o lugar para preencher.
+cmd_guia() { printf '  %-26s %s\n' "$1" "$2"; }
+como_usar() {
+	local estacao ip_srv mascara=32
 	estacao=$(who -m 2>/dev/null | sed -nE 's/.*\(([0-9A-Fa-f.:]+)\).*/\1/p' | head -n 1 || true)
 	ip_srv=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p' | head -n 1 || true)
 	if [[ $estacao == *:* ]]; then mascara=128; fi
-	if [[ $ADMIN != "$CONTA" ]]; then psql_aqui="psql -h localhost -U $ADMIN -d postgres"; fi
-	if ! command -v pgtower >/dev/null; then pgtower_aqui="(pgtower não instalado)"; fi
-	printf '\n%s\n' "Para administrar, o superusuário ${B}$ADMIN${N} (senha no $CASA/.pgpass, só $CONTA lê):"
-	printf '  %-32s %s\n' "$pgtower_aqui" "abre este servidor" "$psql_aqui" "o mesmo, no psql"
-	if ((DOCKER)) && command -v pghangar >/dev/null; then
-		printf '  %-32s %s\n' "sudo pghangar" "cópias e restores (1ª vez: aba 6, teclas b e g)"
+
+	if [[ $ADMIN == "$CONTA" ]]; then
+		echo "Quem administra: você, $CONTA (no PostgreSQL, superusuário com o mesmo nome)"
+		echo "Senha: no $CASA/.pgpass (daqui não precisa; é para outras máquinas)"
+		printf '\n%s\n' "Neste servidor, no seu usuário ou depois de um sudo -i:"
+	else
+		echo "Quem administra: o root, com o superusuário $ADMIN do PostgreSQL"
+		echo "Senha: no $CASA/.pgpass (daqui não precisa; é para outras máquinas)"
+		printf '\n%s\n' "Neste servidor, como root:"
 	fi
-	printf '%s\n' "De outra máquina (o pgtower na sua estação), libere o IP dela no fim do pg_hba.conf:"
-	printf '  %s\n' "hostssl all $ADMIN ${estacao:-IP-DA-ESTACAO}/$mascara scram-sha-256" "sudo systemctl reload postgresql"
-	printf '  %s\n' "e na estação: postgres://$ADMIN@${ip_srv:-IP-DO-SERVIDOR}:$PGPORT/postgres?sslmode=require"
-	printf '  %s\n' "${D}(a senha é a mesma do $CASA/.pgpass daqui)${N}"
-	if [[ -n $estacao ]]; then printf '%s\n' "${D}($estacao é de onde veio esta sessão SSH)${N}"; fi
+	if command -v pgtower >/dev/null; then cmd_guia pgtower "painel de administração, já aberto neste servidor"; fi
+	if [[ $ADMIN == "$CONTA" ]]; then
+		cmd_guia "psql -d postgres" "linha de comando (no seu usuário)"
+		cmd_guia "sudo -u postgres psql" "linha de comando (como root, depois de um sudo -i)"
+	else
+		cmd_guia "sudo -u postgres psql" "linha de comando"
+	fi
+	if ((DOCKER)) && command -v pghangar >/dev/null; then
+		cmd_guia "sudo pghangar" "cópias e restores (1ª vez: aba 6, teclas b e g)"
+	fi
+
+	if [[ -n $estacao ]]; then
+		printf '\n%s\n' "Da sua estação ($estacao, de onde veio este SSH):"
+	else
+		printf '\n%s\n' "Da sua estação (troque IP-DA-ESTACAO pelo IP dela):"
+	fi
+	printf '  %s\n' "1. libere o IP dela no fim do /etc/postgresql/$PG/main/pg_hba.conf:" \
+		"     hostssl all $ADMIN ${estacao:-IP-DA-ESTACAO}/$mascara scram-sha-256" \
+		"2. recarregue: sudo systemctl reload postgresql" \
+		"3. conecte com postgres://$ADMIN@${ip_srv:-IP-DO-SERVIDOR}:$PGPORT/postgres?sslmode=require" \
+		"   e a senha do .pgpass daqui"
+
+	printf '\n%s\n' "O banco de uma aplicação, com um login dono dele (sem superusuário):"
+	printf '  %s\n' 'sudo -u postgres psql -c "CREATE ROLE app LOGIN" -c "\password app"' \
+		'sudo -u postgres psql -c "CREATE DATABASE app OWNER app"' \
+		"se ela roda em outra máquina, a rede dela no fim do pg_hba.conf:" \
+		"  hostssl all app 10.0.10.0/24 scram-sha-256"
+	if ((DOCKER)); then
+		printf '\n%s\n' "Em containers nesta máquina: o passo a passo está no $PASTA/SERVIDOR.md."
+		if [[ $CONTA != root ]]; then echo "O grupo docker vale para $CONTA no próximo login."; fi
+	fi
 }
 
 perguntar() {
@@ -1124,11 +1181,21 @@ main() {
 		printf '%s\n' "${D}Registro completo: $LOG${N}"
 		exit 1
 	fi
-	resumo_admin
-	if ((DOCKER)) && [[ $CONTA != root ]]; then
-		printf '%s\n' "O grupo docker vale para $CONTA no próximo login; resumo em $PASTA/SERVIDOR.md."
+
+	# O guia: na tela (os títulos em negrito), no registro e no ~/pgrunway.txt (um arquivo que não é do pgrunway fica)
+	titulo "Como usar"
+	local guia arq=$CASA/pgrunway.txt
+	guia=$(como_usar)
+	sed -E "s/^(.)/  \1/; s/^  ([^ ].*:)$/  ${B}\1${N}/" <<<"$guia"
+	registrar "$guia"
+	printf '\n'
+	if [[ ! -e $arq ]] || head -n 1 "$arq" | grep -q "^# Gerado pelo $NOME"; then
+		gravar_se_mudou "$arq" 644 "$CONTA:$(id -gn "$CONTA")" "# Gerado pelo $NOME $VERSAO: como usar este servidor. Regravado ao rodar de novo.
+
+$guia" || true
+		printf '  %s\n' "${D}Este guia fica no $arq${N}"
 	fi
-	printf '%s\n' "${D}Registro completo: $LOG${N}"
+	printf '  %s\n' "${D}Registro completo: $LOG${N}"
 }
 
 # Numa linha só: o bash não volta a ler o arquivo depois do main, mesmo que ele mude durante a execução.

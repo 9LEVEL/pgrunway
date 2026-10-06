@@ -1,5 +1,22 @@
 # Mudanças
 
+## 0.6.1 (06/10/2026)
+
+**O fim da instalação ensina a usar, e sai mais uma opção.**
+
+- O resumo final vira um guia, **Como usar**: quem administra, os comandos daqui (no seu usuário ou depois de um
+  `sudo -i`), como entrar da sua estação, passo a passo, e o banco de uma aplicação. Fica também no
+  `~/pgrunway.txt` de quem administra e no registro.
+- O pgtower do root também abre o servidor: depois de um `sudo -i`, `pgtower` entra como quem administra, com a
+  senha lida do `.pgpass` dele (sem cópia). O `config.yml` gerado pelo pgrunway é regravado ao rodar de novo; um que
+  o pgtower já regravou fica como está.
+- Sai `--disco`: o tipo do disco é detectado. Numa máquina virtual, o disco que se diz rotativo (o "QEMU HARDDISK"
+  do KVM, por exemplo) recebe os ajustes de SSD; por baixo, quase sempre é SSD ou um storage com cache.
+- Correção: a verificação do pgtower dava às vezes um aviso falso ("o pgtower não listou este servidor", com um
+  `Broken pipe` no registro). O `grep -q` fechava o pipe antes de o pgtower terminar de escrever.
+- Correção: o cabeçalho do `90-pgrunway.conf` tinha a data; rodando de novo noutro dia, o arquivo era regravado sem
+  nada mudar.
+
 ## 0.6.0 (03/10/2026)
 
 - Com `--com-docker`, instala também o [pghangar](https://github.com/9level/pghangar) (versão fixa, SHA256 do

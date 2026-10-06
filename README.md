@@ -22,8 +22,9 @@ sudo ./install.sh
 Numa máquina Ubuntu nova, física ou virtual, o `install.sh` atualiza o sistema, instala o PostgreSQL e o pgvector
 (com a versão travada), ajusta o Postgres ao tamanho da máquina e fecha o `pg_hba.conf`: o superusuário `postgres`
 nunca entra de outra máquina. Cria o **seu** superusuário de administração e deixa o
-[pgtower](https://github.com/9level/pgtower) instalado e apontado para o servidor: terminou, é digitar `pgtower`.
-Antes de mudar qualquer coisa, confere a máquina e mostra o plano; no fim, prova que tudo responde.
+[pgtower](https://github.com/9level/pgtower) instalado e apontado para o servidor: terminou, é digitar `pgtower`,
+no seu usuário ou depois de um `sudo -i`. Antes de mudar qualquer coisa, confere a máquina e mostra o plano; no fim,
+prova que tudo responde e mostra como usar.
 
 **Da mesma família, da 9Level:** o pgrunway é a pista, onde o servidor decola; o
 [pgtower](https://github.com/9level/pgtower) é a torre, que administra a frota; o
@@ -69,13 +70,17 @@ PostgreSQL 16 do Ubuntu:
 
 ### 3. Administre
 
-O superusuário de administração tem o nome do seu usuário Linux (quem rodou o `sudo`); rodando como root direto, ele
-se chama `dba`. A senha fica no seu `~/.pgpass`, que só você lê, e rodar o pgrunway de novo não a troca.
+O fim da instalação é um guia, **Como usar**, que também fica no `~/pgrunway.txt` de quem administra: quem é o
+superusuário, os comandos daqui, como entrar da sua estação e como criar o banco de uma aplicação.
+
+O superusuário de administração tem o nome do seu usuário Linux (quem rodou o `sudo`, mesmo de dentro de um
+`sudo -i`); rodando como root direto, sem sudo, ele se chama `dba`. A senha fica no seu `~/.pgpass`, que só você lê,
+e rodar o pgrunway de novo não a troca.
 
 | Daqui do servidor | Como |
 |---|---|
-| pgtower | `pgtower`: já abre este servidor, sem senha |
-| psql | `psql -d postgres`, sem senha |
+| pgtower | `pgtower`: já abre este servidor, no seu usuário ou depois de um `sudo -i` (o do root entra como você, com a senha do seu `~/.pgpass`) |
+| psql | `psql -d postgres` no seu usuário; como root, `sudo -u postgres psql` |
 
 **De outra máquina** (o pgtower na sua estação, uma ferramenta de cópia, um restore): libere o IP dela com uma linha
 no fim do `/etc/postgresql/18/main/pg_hba.conf` e recarregue. O resumo final já mostra a linha com o IP de onde veio
@@ -143,8 +148,8 @@ Sem opção nenhuma é o caso comum.
 | `-y`, `--sim` | não pergunta (automação) |
 
 Raramente: `--usuario NOME` (outro usuário Linux como administrador), `--pg N` (outra versão do PostgreSQL),
-`--pgvector X.Y.Z` (versão exata do pgvector), `--disco ssd` (quando a máquina virtual não diz que o disco é SSD) e,
-com `--com-docker`, `--pasta`, `--docker-bip` e `--docker-pool`. Detalhes: `./install.sh --ajuda`.
+`--pgvector X.Y.Z` (versão exata do pgvector) e, com `--com-docker`, `--pasta`, `--docker-bip` e `--docker-pool`.
+Detalhes: `./install.sh --ajuda`.
 
 ## Bom saber
 
@@ -153,15 +158,16 @@ com `--com-docker`, `--pasta`, `--docker-bip` e `--docker-pool`. Detalhes: `./in
 - **Rodar de novo é seguro:** confere e mantém o que já está feito, não atualiza o sistema de novo e regrava o
   bloco do pgrunway no `pg_hba.conf` **no mesmo lugar**, sem tocar nas linhas que você acrescentou.
 - **Os ajustes** ficam em `/etc/postgresql/18/main/conf.d/90-pgrunway.conf` (25% da memória para o cache; 20% com
-  Docker). O `ALTER SYSTEM` vale por cima.
+  Docker). O tipo do disco é detectado: numa máquina virtual, que quase sempre diz que o disco é rotativo, valem os
+  ajustes de SSD. O `ALTER SYSTEM` vale por cima.
 - **O pgvector fica travado:** um `apt upgrade` não troca a extensão dos bancos. Para trocar: `--pgvector X.Y.Z` e,
   depois, `ALTER EXTENSION vector UPDATE` em cada banco.
 - **O certificado SSL é o autoassinado do Ubuntu:** basta para `sslmode=require`; para `verify-full`, troque por um
   da sua CA.
 - **O pgtower e o pghangar** vêm em versões fixas, com o SHA256 do release conferido. Sem acesso ao GitHub, o banco
   fica pronto do mesmo jeito e só as ferramentas ficam para depois (`PGR_PGTOWER_BASE` e `PGR_PGHANGAR_BASE` apontam
-  para um espelho). Um `config.yml` do pgtower que já existe não é tocado (o servidor entra pela tecla `l`). O
-  pghangar só tem binário para amd64.
+  para um espelho). Um `config.yml` do pgtower que não é do pgrunway fica como está (no seu, o servidor entra pela
+  tecla `l`). O pghangar só tem binário para amd64.
 - **O registro** de cada execução fica em `/var/log/pgrunway/`.
 
 ## Desenvolvimento

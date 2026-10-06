@@ -1,5 +1,5 @@
-Script started on 2026-10-03 14:26:01-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo-recusa ./install.sh " <not executed on terminal>]
-[1mpgrunway 0.6.0[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
+Script started on 2026-10-06 11:14:16-03:00 [COMMAND="docker exec -it -e SUDO_USER=deploy -w /pgrunway pgr-demo-recusa ./install.sh " <not executed on terminal>]
+[1mpgrunway 0.6.1[0m coloca um [1mservidor PostgreSQL[0m no ar: a primeira instalação de uma máquina
 nova, física ou virtual, conferida antes e testada no fim.
 
   1. Confere a máquina: sistema, memória, disco e o que já está instalado
@@ -16,8 +16,8 @@ nova, física ou virtual, conferida antes e testada no fim.
   [32m✓[0m arquitetura: amd64
   [32m✓[0m systemd ativo
   [32m✓[0m memória: 61 GB, 16 núcleo(s)
-  [32m✓[0m disco: 50 GB livres em /
-  disco do sistema: rotativo ou não informado (SSD numa máquina virtual: --disco ssd)
+  [32m✓[0m disco: 40 GB livres em /
+  disco do sistema: virtual (kvm), ajustado como SSD
   [32m✓[0m repositório do PostgreSQL (PGDG) tem o noble
   [31m✗[0m já há PostgreSQL 16 aqui: o 18 ficaria noutra porta (use --pg 16 ou um servidor novo)
   [32m✓[0m quem administra: deploy (superusuário do Postgres, senha no /home/deploy/.pgpass)
@@ -25,4 +25,4 @@ nova, física ou virtual, conferida antes e testada no fim.
 [31m[1mNão dá para seguir:[0m
   [31m✗[0m já há PostgreSQL 16 aqui: o 18 ficaria noutra porta (use --pg 16 ou um servidor novo)
 
-Script done on 2026-10-03 14:26:03-03:00 [COMMAND_EXIT_CODE="1"]
+Script done on 2026-10-06 11:14:18-03:00 [COMMAND_EXIT_CODE="1"]
