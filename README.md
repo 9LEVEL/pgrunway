@@ -6,6 +6,7 @@ com um comando, conferido antes e testado no fim.</strong></p>
 <p align="center">
   <a href="https://github.com/9LEVEL/pgrunway/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/9LEVEL/pgrunway/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Ubuntu 24.04 e 26.04" src="https://img.shields.io/badge/Ubuntu-24.04%20%7C%2026.04-E95420?logo=ubuntu&logoColor=white">
+  <img alt="Debian 13" src="https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white">
   <img alt="PostgreSQL 18" src="https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white">
   <img alt="pgvector travado" src="https://img.shields.io/badge/pgvector-travado-336791">
   <img alt="Docker opcional" src="https://img.shields.io/badge/Docker-opcional-2496ED?logo=docker&logoColor=white">
@@ -19,9 +20,9 @@ git clone https://github.com/9LEVEL/pgrunway.git && cd pgrunway
 sudo ./install.sh
 ```
 
-Numa máquina Ubuntu nova, física ou virtual, o `install.sh` atualiza o sistema, instala o PostgreSQL e o pgvector
-(com a versão travada), ajusta o Postgres ao tamanho da máquina e fecha o `pg_hba.conf`: o superusuário `postgres`
-nunca entra de outra máquina. Cria o **seu** superusuário de administração e deixa o
+Numa máquina Ubuntu ou Debian nova, física ou virtual, o `install.sh` atualiza o sistema, instala o PostgreSQL e o
+pgvector (com a versão travada), ajusta o Postgres ao tamanho da máquina e fecha o `pg_hba.conf`: o superusuário
+`postgres` nunca entra de outra máquina. Cria o **seu** superusuário de administração e deixa o
 [pgtower](https://github.com/9level/pgtower) instalado e apontado para o servidor: terminou, é digitar `pgtower`,
 no seu usuário ou depois de um `sudo -i`. Antes de mudar qualquer coisa, confere a máquina e mostra o plano; no fim,
 prova que tudo responde e mostra como usar.
@@ -36,20 +37,24 @@ deixa as duas ferramentas no servidor.
 | É para você se | Não é para você se |
 |---|---|
 | vai pôr um PostgreSQL no ar numa máquina nova (bare metal ou VM) | quer o banco num serviço gerenciado (RDS, Cloud SQL) |
-| quer a mesma instalação, conferida e repetível, em cada servidor | o servidor não é Ubuntu 24.04 ou 26.04 |
+| quer a mesma instalação, conferida e repetível, em cada servidor | o servidor não é Ubuntu 24.04 ou 26.04, nem Debian 13 |
 | usa ou vai usar pgvector (busca por similaridade, RAG) | precisa de replicação ou alta disponibilidade |
 
 ## Siga-me: da máquina zerada ao servidor administrado
 
 ### 1. Instale
 
-Num Ubuntu Server **24.04 ou 26.04** recém-instalado (amd64 ou arm64), com 2 GB de memória ou mais e acesso a
-`apt.postgresql.org`:
+Num Ubuntu Server **24.04 ou 26.04** ou num **Debian 13** recém-instalado (amd64 ou arm64), com 2 GB de memória ou
+mais e acesso a `apt.postgresql.org`:
 
 ```bash
 git clone https://github.com/9LEVEL/pgrunway.git && cd pgrunway
 sudo ./install.sh
 ```
+
+**No Debian**, o `sudo` e o `git` não vêm na instalação mínima (e, se você deu senha ao root, o seu usuário não
+está no grupo `sudo`). Como root: `apt install sudo git && adduser SEU_USUARIO sudo`; entre de novo e siga como
+acima. Rodando como root direto, sem `sudo`, o superusuário do Postgres se chama `dba`.
 
 Esta é a tela inicial: o que ele vai fazer, a conferência da máquina e o plano. **Nada muda até você responder
 `s`.** Para só conferir, sem instalar: `sudo ./install.sh --checar`.
@@ -153,17 +158,20 @@ Detalhes: `./install.sh --ajuda`.
 
 ## Bom saber
 
-- **Nada é apagado nem desinstalado.** Um conflito (outro PostgreSQL, a porta ocupada, o Docker do Ubuntu) para a
+- **Nada é apagado nem desinstalado.** Um conflito (outro PostgreSQL, a porta ocupada, o Docker do sistema) para a
   instalação e diz o que fazer.
 - **Rodar de novo é seguro:** confere e mantém o que já está feito, não atualiza o sistema de novo e regrava o
   bloco do pgrunway no `pg_hba.conf` **no mesmo lugar**, sem tocar nas linhas que você acrescentou.
 - **Os ajustes** ficam em `/etc/postgresql/18/main/conf.d/90-pgrunway.conf` (25% da memória para o cache; 20% com
   Docker). O tipo do disco é detectado: numa máquina virtual, que quase sempre diz que o disco é rotativo, valem os
   ajustes de SSD. O `ALTER SYSTEM` vale por cima.
+- **O disco que conta é o dos bancos:** a conferência mede o espaço livre de `/var/lib/postgresql`, que nem sempre
+  é o do `/`. O instalador do Debian costuma separar um `/var` pequeno: com menos de 10 GB ali, o pgrunway para
+  antes de instalar; aumente o volume ou monte um disco em `/var/lib/postgresql`.
 - **O pgvector fica travado:** um `apt upgrade` não troca a extensão dos bancos. Para trocar: `--pgvector X.Y.Z` e,
   depois, `ALTER EXTENSION vector UPDATE` em cada banco.
-- **O certificado SSL é o autoassinado do Ubuntu:** basta para `sslmode=require`; para `verify-full`, troque por um
-  da sua CA.
+- **O certificado SSL é o autoassinado do sistema** (o do pacote `ssl-cert`): basta para `sslmode=require`; para
+  `verify-full`, troque por um da sua CA.
 - **O pgtower e o pghangar** vêm em versões fixas, com o SHA256 do release conferido. Sem acesso ao GitHub, o banco
   fica pronto do mesmo jeito e só as ferramentas ficam para depois (`PGR_PGTOWER_BASE` e `PGR_PGHANGAR_BASE` apontam
   para um espelho). Um `config.yml` do pgtower que não é do pgrunway fica como está (no seu, o servidor entra pela
@@ -172,7 +180,8 @@ Detalhes: `./install.sh --ajuda`.
 
 ## Desenvolvimento
 
-`teste/rodar.sh [26.04|24.04]` roda o instalador num Ubuntu descartável (container com systemd): as recusas, a
+`teste/rodar.sh [26.04|24.04|debian-13]` roda o instalador num servidor descartável (container com systemd): as
+recusas (inclusive pouco espaço em `/var/lib/postgresql`), a
 instalação com o superusuário e o pgtower, uma aplicação liberada no `pg_hba.conf`, o mesmo servidor ganhando
 `--com-docker` com o pghangar e as repetições, que não podem mudar nada, nem a senha. É o que o [CI](.github/workflows/ci.yml) roda a cada mudança. As imagens são de uma execução
 real (`docs/demo/capturar.sh` e `docs/demo/gravar.sh`). Mudanças: [CHANGELOG.md](CHANGELOG.md).

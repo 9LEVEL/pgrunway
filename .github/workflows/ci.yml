@@ -21,17 +21,23 @@ jobs:
           install.sh teste/rodar.sh teste/comum.sh docs/demo/capturar.sh docs/demo/gravar.sh docs/demo/ambiente.sh
 
   instalacao:
-    name: instalação no Ubuntu ${{ matrix.ubuntu }}
+    name: instalação no ${{ matrix.nome }}
     needs: shellcheck
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        ubuntu: ["24.04", "26.04"]
+        include:
+          - sistema: "24.04"
+            nome: Ubuntu 24.04
+          - sistema: "26.04"
+            nome: Ubuntu 26.04
+          - sistema: debian-13
+            nome: Debian 13
     steps:
       - uses: actions/checkout@v5
-      # Um Ubuntu descartável com systemd num container privilegiado: recusa por redes cruzadas, --checar,
-      # instalação completa e uma segunda execução que não pode mudar nada.
+      # Um servidor descartável com systemd num container privilegiado: as recusas (redes cruzadas, disco dos
+      # bancos), --checar, instalação completa e uma segunda execução que não pode mudar nada.
       - name: instalação completa num servidor descartável
-        run: teste/rodar.sh "${{ matrix.ubuntu }}"
+        run: teste/rodar.sh "${{ matrix.sistema }}"
