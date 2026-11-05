@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Testa o install.sh num Ubuntu descartável (teste/comum.sh): um container privilegiado com systemd, que faz papel
-# de servidor novo. Nada do host é alterado além dos containers, das redes e dos volumes do teste, apagados no fim.
+# Testa o install.sh num servidor descartável, Ubuntu ou Debian (teste/comum.sh): um container privilegiado com
+# systemd, que faz papel de servidor novo. Nada do host é alterado além dos containers, das redes e dos volumes do
+# teste, apagados no fim.
 #
 #   teste/rodar.sh                  Ubuntu 26.04
-#   teste/rodar.sh 24.04            outra versão (no 24.04 o PostgreSQL 18 vem do PGDG)
+#   teste/rodar.sh 24.04            outra versão do Ubuntu (no 24.04 o PostgreSQL 18 vem do PGDG)
+#   teste/rodar.sh debian-13        Debian 13 (o PostgreSQL 18 também vem do PGDG: o Debian 13 tem a 17)
 #   teste/rodar.sh 26.04 --manter   deixa o container de pé para olhar (docker exec -it pgr-teste-26.04 bash)
 #
 # Roteiro: (1) o que a conferência precisa recusar; (2) --checar, como root e como quem veio do sudo; (3)
@@ -17,13 +19,18 @@
 
 set -Eeuo pipefail
 
-UBUNTU=${1:-26.04}
+SISTEMA=${1:-26.04}
 MANTER=${2:-}
 # shellcheck source=teste/comum.sh
 . "$(dirname "$0")/comum.sh"
-NOME=pgr-teste-$UBUNTU
-REDE=pgr-teste-$UBUNTU
-SUBREDE=10.251.${UBUNTU%%.*}.0/24   # uma por versão (testes em paralelo), fora das redes do Docker de dentro
+NOME=pgr-teste-$SISTEMA
+REDE=pgr-teste-$SISTEMA
+# Uma sub-rede por sistema (testes em paralelo), fora das redes do Docker de dentro: 10.251.26 para o Ubuntu 26.04,
+# 10.251.113 para o Debian 13
+case $SISTEMA in
+debian-*) SUBREDE=10.251.$((100 + ${SISTEMA#debian-})).0/24 ;;
+*) SUBREDE=10.251.${SISTEMA%%.*}.0/24 ;;
+esac
 HBA=/etc/postgresql/18/main/pg_hba.conf
 APLICACAO="hostssl all             all             10.0.10.0/24            scram-sha-256"
 SAIDA=$(mktemp -d)
@@ -35,7 +42,7 @@ falhou() {
 	exit 1
 }
 limpar_docker() {
-	derrubar "$NOME" "$NOME-conflito"
+	derrubar "$NOME" "$NOME-conflito" "$NOME-disco"
 	docker network rm "$REDE" >/dev/null 2>&1 || true
 }
 limpar() {
@@ -103,13 +110,13 @@ else
 fi
 echo "pghangar $PGHANGAR_VERSAO: $PGHANGAR"
 
-passo "servidor de teste: Ubuntu $UBUNTU com systemd, sem as listas do apt, como um recém-instalado"
-construir_imagem "$UBUNTU"
+passo "servidor de teste: $(nome_sistema "$SISTEMA") com systemd, sem as listas do apt, como um recém-instalado"
+construir_imagem "$SISTEMA"
 limpar_docker # sobras de um teste anterior
 docker network create --subnet "$SUBREDE" "$REDE" >/dev/null
 
 passo "1. o que a conferência precisa recusar (container na rede padrão do Docker, 172.17.0.0/16)"
-subir "$NOME-conflito" bridge "$UBUNTU"
+subir "$NOME-conflito" bridge "$SISTEMA"
 recusa redes.txt 'cruza com a do Docker (172.17.0.0/16)' --com-docker --usuario teste
 recusa sem-docker.txt 'só com --com-docker' --pasta /srv
 recusa sem-usuario.txt 'não existe neste servidor' --usuario ninguem
@@ -121,8 +128,19 @@ fi
 echo "ok: com --docker-bip e --docker-pool fora da rede da máquina, aceitou"
 derrubar "$NOME-conflito"
 
+# O espaço que conta é o de /var/lib/postgresql, não o do /: aqui, um disco de 1 GB montado ali
+subir "$NOME-disco" bridge "$SISTEMA" --tmpfs /var/lib/postgresql:size=1g
+if docker exec "$NOME-disco" /pgrunway/install.sh --checar >"$SAIDA/disco.txt" 2>&1 ||
+	! grep -q 'GB livres em /var/lib/postgresql (mínimo 10 GB)' "$SAIDA/disco.txt" ||
+	grep -q 'erro inesperado' "$SAIDA/disco.txt"; then
+	cat "$SAIDA/disco.txt"
+	falhou "com 1 GB em /var/lib/postgresql, o --checar devia recusar pelo disco dos bancos"
+fi
+echo "ok: recusou 1 GB em /var/lib/postgresql, mesmo com espaço no /"
+derrubar "$NOME-disco"
+
 passo "2. --checar"
-subir "$NOME" "$REDE" "$UBUNTU"
+subir "$NOME" "$REDE" "$SISTEMA"
 docker exec "$NOME" /pgrunway/install.sh --checar >"$SAIDA/checar-root.txt"
 if ! grep -q 'o superusuário se chama dba' "$SAIDA/checar-root.txt"; then falhou "rodando como root, o superusuário devia ser dba"; fi
 docker exec -e SUDO_USER=teste "$NOME" /pgrunway/install.sh --checar | tee "$SAIDA/checar.txt"
@@ -130,6 +148,11 @@ if ! grep -q 'Primeira instalação: antes de tudo, atualiza o sistema' "$SAIDA/
 	falhou "o plano da primeira instalação devia atualizar o sistema"
 fi
 if ! grep -q 'quem administra: teste' "$SAIDA/checar.txt"; then falhou "quem veio do sudo devia administrar"; fi
+# O codinome uma vez só: o PRETTY_NAME do Debian já o traz ("Debian GNU/Linux 13 (trixie)")
+if ! grep -q "sistema: $(docker exec "$NOME" sh -c '. /etc/os-release; echo "$PRETTY_NAME"')" "$SAIDA/checar.txt" ||
+	grep -Eq 'sistema: .*\(([a-z]+)\) \(\1\)' "$SAIDA/checar.txt"; then
+	falhou "a linha do sistema devia trazer o nome dele, com o codinome uma vez só"
+fi
 
 passo "3. instalação sem opção nenhuma"
 instalar so-banco.txt
@@ -207,4 +230,4 @@ instalar com-docker-2.txt --com-docker
 sem_mudanca com-docker-2.txt
 aplicacao_depois_do_bloco
 
-passo "Tudo certo no Ubuntu $UBUNTU"
+passo "Tudo certo no $(nome_sistema "$SISTEMA")"

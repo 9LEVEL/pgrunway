@@ -1,8 +1,9 @@
 # Instruções para agentes
 
-`pgrunway` (antes pginstall.srv) coloca um servidor PostgreSQL + pgvector no ar numa máquina Ubuntu nova: sistema
-atualizado, ajustes proporcionais, `pg_hba.conf` em que o `postgres` nunca entra de outra máquina e, com
-`--com-docker`, o Docker oficial para projetos em containers na mesma máquina. Um script só, `install.sh`, em bash.
+`pgrunway` (antes pginstall.srv) coloca um servidor PostgreSQL + pgvector no ar numa máquina Ubuntu ou Debian
+nova: sistema atualizado, ajustes proporcionais, `pg_hba.conf` em que o `postgres` nunca entra de outra máquina e,
+com `--com-docker`, o Docker oficial para projetos em containers na mesma máquina. Um script só, `install.sh`, em
+bash.
 
 **Idioma:** português do Brasil em tudo: mensagens do script, documentos e commits.
 
@@ -23,7 +24,7 @@ atualizado, ajustes proporcionais, `pg_hba.conf` em que o `postgres` nunca entra
 
 ```bash
 docker run --rm -v "$PWD:/m:ro" -w /m koalaman/shellcheck:stable -x -S style install.sh teste/*.sh docs/demo/*.sh
-teste/rodar.sh 26.04      # e teste/rodar.sh 24.04 quando mexer no PostgreSQL, no pgvector ou nos repositórios
+teste/rodar.sh 26.04      # e 24.04 e debian-13 se mexer no PostgreSQL, no pgvector, nos repositórios ou no sistema
 ```
 
 Versão nova do pgtower: `PGTOWER_VERSAO` no `install.sh` (o download confere o SHA256 do release).

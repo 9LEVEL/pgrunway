@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# pgrunway: coloca um servidor PostgreSQL no ar. É a primeira instalação de uma máquina Ubuntu nova, física ou
-# virtual: sistema atualizado, PostgreSQL e pgvector (travado numa versão), ajustes proporcionais à máquina e um
-# pg_hba.conf em que o superusuário postgres nunca entra pela rede. Cria o seu superusuário de administração (senha
-# no ~/.pgpass) e deixa o pgtower instalado e apontado para este servidor. Com --com-docker, instala também o Docker
-# (para projetos em containers na mesma máquina) e o pghangar, que copia e restaura bancos entre servidores em
-# containers. Termina conferindo tudo com um banco e um login temporários.
+# pgrunway: coloca um servidor PostgreSQL no ar. É a primeira instalação de uma máquina Ubuntu ou Debian nova,
+# física ou virtual: sistema atualizado, PostgreSQL e pgvector (travado numa versão), ajustes proporcionais à
+# máquina e um pg_hba.conf em que o superusuário postgres nunca entra pela rede. Cria o seu superusuário de
+# administração (senha no ~/.pgpass) e deixa o pgtower instalado e apontado para este servidor. Com --com-docker,
+# instala também o Docker (para projetos em containers na mesma máquina) e o pghangar, que copia e restaura bancos
+# entre servidores em containers. Termina conferindo tudo com um banco e um login temporários.
 #
 #   sudo ./install.sh              explica, confere a máquina, mostra o plano e pede confirmação
 #   sudo ./install.sh --checar     só confere a máquina e mostra o plano; não muda nada
@@ -15,7 +15,7 @@
 
 set -Eeuo pipefail
 
-VERSAO=0.6.1
+VERSAO=0.7.0
 NOME=pgrunway
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -48,7 +48,7 @@ DOCKER_POOL=${PGR_DOCKER_POOL:-172.18.0.0/16}
 
 ajuda() {
 	cat <<EOF
-$NOME $VERSAO: coloca um servidor PostgreSQL + pgvector no ar, numa máquina Ubuntu nova.
+$NOME $VERSAO: coloca um servidor PostgreSQL + pgvector no ar, numa máquina Ubuntu ou Debian nova.
 
 Uso: sudo ./install.sh [opções]      (sem opção nenhuma, é o caso comum)
 
@@ -197,7 +197,10 @@ explicar() {
 # ---------------------------------------------------------------------------------------------------------------
 # 1. Conferência da máquina
 
-COD='' ARQ='' RAM_MB=0 CPUS=0 DISCO_GB=0 DISCO_TOTAL_GB=0 SSD=0 DISCO_TIPO='' PG_ORIGEM='' PGPORT=5432
+# DISTRO: ubuntu ou debian (o ID do /etc/os-release), que também é o caminho do repositório do Docker; DISTRO_NOME,
+# o nome nas mensagens. PG_ORIGEM: $DISTRO (o PostgreSQL vem do próprio sistema) ou pgdg.
+DISTRO='' DISTRO_NOME='' COD='' ARQ='' RAM_MB=0 CPUS=0 DISCO_GB=0 DISCO_TOTAL_GB=0 SSD=0 DISCO_TIPO='' PG_ORIGEM=''
+PGPORT=5432
 REDE_BIP='' REDE_POOL='' DAEMON_JSON_EXISTE=0
 PASSO=0
 passo() { PASSO=$((PASSO + 1)) && titulo "$PASSO. $*"; }
@@ -210,8 +213,14 @@ checar_maquina() {
 	# shellcheck source=/dev/null
 	. /etc/os-release
 	COD=${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}
-	if [[ ${ID:-} != ubuntu || -z $COD ]]; then
-		erro "sistema não suportado: ${PRETTY_NAME:-desconhecido} (este instalador é para Ubuntu)"
+	case ${ID:-} in
+	ubuntu) DISTRO=ubuntu DISTRO_NOME=Ubuntu ;;
+	debian) DISTRO=debian DISTRO_NOME=Debian ;;
+	esac
+	if [[ -z $DISTRO || -z $COD ]]; then
+		erro "sistema não suportado: ${PRETTY_NAME:-desconhecido} (este instalador é para Ubuntu e Debian)"
+	elif [[ $PRETTY_NAME == *"($COD)"* ]]; then
+		ok "sistema: $PRETTY_NAME" # o do Debian já traz o codinome: "Debian GNU/Linux 13 (trixie)"
 	else
 		ok "sistema: $PRETTY_NAME ($COD)"
 	fi
@@ -228,21 +237,35 @@ checar_maquina() {
 	else
 		ok "memória: $((RAM_MB / 1024)) GB, $CPUS núcleo(s)"
 	fi
-	DISCO_GB=$(df -B1G --output=avail / | tail -n 1 | tr -d ' ')
+	# O disco que conta é o dos bancos, /var/lib/postgresql, que nem sempre é o do / (um /var separado, como o
+	# instalador do Debian costuma criar, ou um disco montado ali). Antes de instalar, a pasta ainda não existe:
+	# vale a mais próxima que existe.
+	local dados=/var/lib/postgresql montagem
+	while [[ ! -e $dados ]]; do dados=$(dirname "$dados"); done
+	montagem=$(findmnt -no TARGET -T "$dados" 2>/dev/null || echo /)
+	DISCO_GB=$(df -B1G --output=avail "$dados" | tail -n 1 | tr -d ' ')
 	# Os ajustes usam o tamanho do disco, que não muda; o espaço livre muda, e a configuração ficaria indo e voltando
-	DISCO_TOTAL_GB=$(df -B1G --output=size / | tail -n 1 | tr -d ' ')
+	DISCO_TOTAL_GB=$(df -B1G --output=size "$dados" | tail -n 1 | tr -d ' ')
 	if ((DISCO_GB < 10)); then
-		erro "disco: ${DISCO_GB} GB livres em / (mínimo 10 GB)"
+		erro "disco: ${DISCO_GB} GB livres em $montagem (mínimo 10 GB)"
 	elif ((DISCO_GB < 30)); then
-		aviso "disco: ${DISCO_GB} GB livres em / (os bancos crescem; recomendado: 30 GB ou mais)"
+		aviso "disco: ${DISCO_GB} GB livres em $montagem (os bancos crescem: o ideal é 30 GB ou mais)"
 	else
-		ok "disco: ${DISCO_GB} GB livres em /"
+		ok "disco: ${DISCO_GB} GB livres em $montagem"
+	fi
+	if [[ $montagem != / ]]; then
+		if ((DISCO_GB < 10)); then
+			info "  é lá que ficam os bancos (/var/lib/postgresql): aumente-o ou monte ali um disco maior"
+		else
+			info "  é lá que ficam os bancos (/var/lib/postgresql)"
+		fi
 	fi
 	# O tipo do disco decide os ajustes de leitura aleatória. Numa máquina virtual, o disco quase sempre se diz
 	# rotativo ("QEMU HARDDISK") e por baixo é SSD ou um storage com cache: vale o ajuste de SSD (o PGTune faz o
 	# mesmo para SAN). Numa máquina física, o kernel sabe; um valor errado se troca com ALTER SYSTEM.
-	local rota virt
-	rota=$(lsblk -nso ROTA "$(findmnt -no SOURCE /)" 2>/dev/null | tail -n 1 | tr -d ' ' || true)
+	local rota virt rotulo="disco do sistema"
+	if [[ $montagem != / ]]; then rotulo="disco dos bancos"; fi
+	rota=$(lsblk -nso ROTA "$(findmnt -no SOURCE -T "$dados")" 2>/dev/null | tail -n 1 | tr -d ' ' || true)
 	virt=$(systemd-detect-virt --vm 2>/dev/null || true)
 	if [[ $virt == none ]]; then virt=''; fi
 	if [[ $rota == 0 ]]; then
@@ -252,7 +275,7 @@ checar_maquina() {
 	else
 		SSD=0 DISCO_TIPO=rotativo
 	fi
-	info "disco do sistema: $DISCO_TIPO"
+	info "$rotulo: $DISCO_TIPO"
 	if lsblk -nso TYPE "$(findmnt -no SOURCE /)" 2>/dev/null | grep -qx crypt && ! instalado clevis-luks; then
 		aviso "o disco do sistema é criptografado (LUKS) sem desbloqueio automático: a cada reinício alguém digita a senha no console"
 	fi
@@ -261,7 +284,7 @@ checar_maquina() {
 	fi
 
 	if ! command -v python3 >/dev/null; then
-		erro "python3 não encontrado (vem em toda instalação do Ubuntu Server; usado para conferir redes e senhas)"
+		erro "python3 não encontrado: apt install python3 (usado para conferir redes e senhas)"
 	fi
 
 	# apt rodando agora (a atualização automática, por exemplo): a instalação espera
@@ -273,7 +296,7 @@ checar_maquina() {
 		aviso "o apt está em uso agora (pid $apt_pids): a instalação espera ele terminar"
 	fi
 
-	# repositórios alcançáveis para esta versão do Ubuntu
+	# repositórios alcançáveis para esta versão do sistema
 	if command -v curl >/dev/null; then
 		if curl -fsSI -m 15 "https://apt.postgresql.org/pub/repos/apt/dists/${COD}-pgdg/Release" >/dev/null 2>&1; then
 			ok "repositório do PostgreSQL (PGDG) tem o $COD"
@@ -281,7 +304,7 @@ checar_maquina() {
 			erro "repositório do PostgreSQL (PGDG) não responde ou não tem o $COD (apt.postgresql.org)"
 		fi
 		if ((DOCKER)); then
-			if curl -fsSI -m 15 "https://download.docker.com/linux/ubuntu/dists/${COD}/Release" >/dev/null 2>&1; then
+			if curl -fsSI -m 15 "https://download.docker.com/linux/${DISTRO}/dists/${COD}/Release" >/dev/null 2>&1; then
 				ok "repositório do Docker tem o $COD"
 			else
 				erro "repositório do Docker não responde ou não tem o $COD (download.docker.com)"
@@ -422,6 +445,7 @@ checar_admin() {
 		ok "quem administra: $ADMIN (superusuário do Postgres, senha no $CASA/.pgpass)"
 	else
 		info "rodando como root direto: o superusuário se chama dba (senha no /root/.pgpass)"
+		info "  para administrar com o seu usuário: sudo ./install.sh, ou --usuario NOME"
 	fi
 }
 
@@ -433,11 +457,11 @@ checar_pasta() {
 	fi
 }
 
-# Do Ubuntu, quando ele tem a versão pedida; senão, do PGDG. Sem as listas do apt (servidor recém-instalado), a
-# conferência não sabe: decide de novo depois do apt update.
+# Do próprio sistema, quando ele tem a versão pedida; senão, do PGDG (o Debian 13 tem só a 17, por exemplo). Sem as
+# listas do apt (servidor recém-instalado), a conferência não sabe: decide de novo depois do apt update.
 decidir_origem() {
 	if apt-cache madison "postgresql-$PG" 2>/dev/null | grep -v apt.postgresql.org | grep -q .; then
-		PG_ORIGEM=ubuntu
+		PG_ORIGEM=$DISTRO
 	elif [[ -z $(find /var/lib/apt/lists -maxdepth 1 -name '*_Packages*' -print -quit 2>/dev/null) ]]; then
 		PG_ORIGEM=''
 	else
@@ -506,9 +530,9 @@ mostrar_plano() {
 	titulo "Plano"
 	local origem
 	case $PG_ORIGEM in
-	ubuntu) origem="do Ubuntu" ;;
-	pgdg) origem="do PGDG (o repositório oficial do PostgreSQL): o Ubuntu $COD não tem a $PG" ;;
-	*) origem="(do Ubuntu, ou do PGDG se o Ubuntu não tiver a $PG)" ;;
+	"$DISTRO") origem="do $DISTRO_NOME" ;;
+	pgdg) origem="do PGDG (o repositório oficial do PostgreSQL): o $DISTRO_NOME $COD não tem a $PG" ;;
+	*) origem="(do $DISTRO_NOME, ou do PGDG se o $DISTRO_NOME não tiver a $PG)" ;;
 	esac
 	if ((ATUALIZAR)); then info "Primeira instalação: antes de tudo, atualiza o sistema (apt upgrade)"; fi
 	info "PostgreSQL $PG $origem"
@@ -586,8 +610,8 @@ Signed-By: $chave" || true
 Package: postgresql-$PG-pgvector
 Pin: version $alvo
 Pin-Priority: 1001"
-	if [[ $PG_ORIGEM == ubuntu ]]; then
-		pin="# Gerado pelo $NOME. O PostgreSQL vem do Ubuntu; do PGDG, na prática, só o pgvector.
+	if [[ $PG_ORIGEM == "$DISTRO" ]]; then
+		pin="# Gerado pelo $NOME. O PostgreSQL vem do $DISTRO_NOME; do PGDG, na prática, só o pgvector.
 Package: *
 Pin: release o=apt.postgresql.org
 Pin-Priority: 100
@@ -625,11 +649,11 @@ instalar_docker() {
 	passo "Docker"
 	if ! grep -rlsq 'download.docker.com' /etc/apt/sources.list /etc/apt/sources.list.d/ --exclude=docker.sources; then
 		install -d -m 0755 /etc/apt/keyrings
-		[[ -s /etc/apt/keyrings/docker.asc ]] || rodar curl -fsSL -o /etc/apt/keyrings/docker.asc https://download.docker.com/linux/ubuntu/gpg
+		[[ -s /etc/apt/keyrings/docker.asc ]] || rodar curl -fsSL -o /etc/apt/keyrings/docker.asc "https://download.docker.com/linux/$DISTRO/gpg"
 		chmod a+r /etc/apt/keyrings/docker.asc
-		gravar_se_mudou /etc/apt/sources.list.d/docker.sources 644 root:root "# Repositório oficial do Docker (as versões do Ubuntu ficam para trás). Gerado pelo $NOME.
+		gravar_se_mudou /etc/apt/sources.list.d/docker.sources 644 root:root "# Repositório oficial do Docker (as versões do $DISTRO_NOME ficam para trás). Gerado pelo $NOME.
 Types: deb
-URIs: https://download.docker.com/linux/ubuntu
+URIs: https://download.docker.com/linux/$DISTRO
 Suites: $COD
 Components: stable
 Signed-By: /etc/apt/keyrings/docker.asc" || true

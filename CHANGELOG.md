@@ -1,5 +1,19 @@
 # Mudanças
 
+## 0.7.0 (05/11/2026)
+
+**Debian 13 também.**
+
+- Instala no Debian 13 (trixie), além do Ubuntu 24.04 e 26.04. O PostgreSQL 18 vem do PGDG (o Debian 13 tem a 17)
+  e, com `--com-docker`, o Docker vem do repositório oficial para Debian. O CI testa os três sistemas.
+- O disco que conta é o dos bancos: a conferência mede o espaço livre de `/var/lib/postgresql`, não o do `/`. O
+  instalador do Debian costuma separar um `/var` pequeno; com menos de 10 GB ali, o pgrunway para antes de instalar
+  e diz qual disco aumentar. O `max_wal_size` e o tipo do disco (SSD ou rotativo) também passam a olhar esse disco.
+- Rodando como root direto (comum no Debian, onde o `sudo` não vem na instalação mínima), a conferência lembra
+  que `sudo ./install.sh` ou `--usuario NOME` deixam o seu usuário como administrador.
+- `teste/rodar.sh debian-13` testa num Debian descartável, e o teste ganha a recusa por pouco espaço em
+  `/var/lib/postgresql`.
+
 ## 0.6.1 (06/10/2026)
 
 **O fim da instalação ensina a usar, e sai mais uma opção.**
